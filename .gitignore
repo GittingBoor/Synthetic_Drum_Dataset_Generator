@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtuel Enviroment
+venv/
+.env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Test-Output
+script/_dataset_builder_test_output/
+
+# Data
+data/
