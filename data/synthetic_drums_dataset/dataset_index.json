@@ -1,0 +1,97 @@
+[
+  {
+    "song_identifier": "song_0000_pop_straight_c_major",
+    "audio_path": "data/synthetic_drums_dataset\\audio\\song_0000_mix_0dB.wav",
+    "label_path": "data/synthetic_drums_dataset\\labels\\song_0000_labels.json",
+    "midi_path": "data/synthetic_drums_dataset\\midi\\song_0000.mid",
+    "mix_variant": "balanced",
+    "song_specification": {
+      "song_identifier": "song_0000_pop_straight_c_major",
+      "tempo_bpm": 120.0,
+      "time_signature": [
+        4,
+        4
+      ],
+      "number_of_bars": 16,
+      "key": "C major",
+      "style": "pop_straight",
+      "random_seed": 1234
+    }
+  },
+  {
+    "song_identifier": "song_0001_pop_straight_c_major",
+    "audio_path": "data/synthetic_drums_dataset\\audio\\song_0001_mix_0dB.wav",
+    "label_path": "data/synthetic_drums_dataset\\labels\\song_0001_labels.json",
+    "midi_path": "data/synthetic_drums_dataset\\midi\\song_0001.mid",
+    "mix_variant": "balanced",
+    "song_specification": {
+      "song_identifier": "song_0001_pop_straight_c_major",
+      "tempo_bpm": 120.0,
+      "time_signature": [
+        4,
+        4
+      ],
+      "number_of_bars": 16,
+      "key": "C major",
+      "style": "pop_straight",
+      "random_seed": 1235
+    }
+  },
+  {
+    "song_identifier": "song_0002_pop_straight_c_major",
+    "audio_path": "data/synthetic_drums_dataset\\audio\\song_0002_mix_0dB.wav",
+    "label_path": "data/synthetic_drums_dataset\\labels\\song_0002_labels.json",
+    "midi_path": "data/synthetic_drums_dataset\\midi\\song_0002.mid",
+    "mix_variant": "balanced",
+    "song_specification": {
+      "song_identifier": "song_0002_pop_straight_c_major",
+      "tempo_bpm": 120.0,
+      "time_signature": [
+        4,
+        4
+      ],
+      "number_of_bars": 16,
+      "key": "C major",
+      "style": "pop_straight",
+      "random_seed": 1236
+    }
+  },
+  {
+    "song_identifier": "song_0003_pop_straight_c_major",
+    "audio_path": "data/synthetic_drums_dataset\\audio\\song_0003_mix_0dB.wav",
+    "label_path": "data/synthetic_drums_dataset\\labels\\song_0003_labels.json",
+    "midi_path": "data/synthetic_drums_dataset\\midi\\song_0003.mid",
+    "mix_variant": "balanced",
+    "song_specification": {
+      "song_identifier": "song_0003_pop_straight_c_major",
+      "tempo_bpm": 120.0,
+      "time_signature": [
+        4,
+        4
+      ],
+      "number_of_bars": 16,
+      "key": "C major",
+      "style": "pop_straight",
+      "random_seed": 1237
+    }
+  },
+  {
+    "song_identifier": "song_0004_pop_straight_c_major",
+    "audio_path": "data/synthetic_drums_dataset\\audio\\song_0004_mix_0dB.wav",
+    "label_path": "data/synthetic_drums_dataset\\labels\\song_0004_labels.json",
+    "midi_path": "data/synthetic_drums_dataset\\midi\\song_0004.mid",
+    "mix_variant": "balanced",
+    "song_specification": {
+      "song_identifier": "song_0004_pop_straight_c_major",
+      "tempo_bpm": 120.0,
+      "time_signature": [
+        4,
+        4
+      ],
+      "number_of_bars": 16,
+      "key": "C major",
+      "style": "pop_straight",
+      "random_seed": 1238
+    }
+  }
+]
