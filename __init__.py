@@ -16,7 +16,6 @@ from script.audio_renderer import AudioRenderer
 from script.label_extractor import LabelExtractor, LabelEvent
 from script.dataset_example import DatasetExample
 
-
 # ---------------------------------------------------------------------------
 # KONFIGURATION – HIER STELLST DU ALLES EIN
 # (Tempo, Anzahl Songs, Instrumente, Output-Pfade, …)
@@ -62,6 +61,9 @@ MINIMUM_VELOCITY = 5
 TIME_UNIT = "seconds"
 INCLUDE_NON_DRUMS = True
 
+# Gewünschte Bandgröße pro Song
+MIN_INSTRUMENTS_PER_SONG = 4
+MAX_INSTRUMENTS_PER_SONG = 8
 
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen zum Erzeugen der zentralen Objekte
@@ -339,13 +341,12 @@ def create_harmony_generator() -> HarmonyGenerator:
         "min": [0, 3, 7],
         "maj7": [0, 4, 7, 11],
         "min7": [0, 3, 7, 10],
+        "7": [0, 4, 7, 10],
+        "sus2": [0, 2, 7],
+        "sus4": [0, 5, 7],
     }
 
-    pattern_templates = {
-        "pop_bass_8th": {},
-        "pop_chords_4bar": {},
-        "pop_pad_whole": {},
-    }
+    pattern_templates = {}
 
     return HarmonyGenerator(
         scale_vocab=scale_vocab,
@@ -501,6 +502,7 @@ def build_single_example(
     return example
 
 
+
 # ---------------------------------------------------------------------------
 # Hauptfunktion: erzeugt den kompletten Datensatz
 # ---------------------------------------------------------------------------
@@ -513,7 +515,10 @@ def main() -> None:
 
     # Zentrale Objekte
     drum_mapping = create_drum_mapping()
-    band_configuration = create_band_configuration(drum_mapping)
+
+    # Alle verfügbaren Instrumente (Pool) – daraus werden pro Song Subsets gewählt
+    available_instruments = create_instruments()
+
     harmony_generator = create_harmony_generator()
     drum_pattern_generator = create_drum_pattern_generator(drum_mapping)
     midi_builder = create_midi_song_builder(drum_mapping)
@@ -526,6 +531,20 @@ def main() -> None:
 
     for i in range(NUMBER_OF_SONGS):
         print(f"\n[INFO] Generiere Song {i + 1}/{NUMBER_OF_SONGS} …")
+
+        # Seed setzen, damit Bandwahl + Events pro Song reproduzierbar sind
+        random_seed = GLOBAL_RANDOM_SEED + i
+        random.seed(random_seed)
+
+        # Pro Song eine zufällige Bandbesetzung aus 4–8 Instrumenten wählen
+        band_configuration = BandConfiguration.choose_random_band(
+            available_patches=available_instruments,
+            min_instruments=MIN_INSTRUMENTS_PER_SONG,
+            max_instruments=MAX_INSTRUMENTS_PER_SONG,
+            drum_mapping=drum_mapping,
+            drum_channel=9,  # GM-Standard-Drumkanal
+        )
+
         example = build_single_example(
             index=i,
             drum_mapping=drum_mapping,

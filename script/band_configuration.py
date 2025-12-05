@@ -52,68 +52,97 @@ class BandConfiguration:
         """
         return [inst for inst in self.instruments if inst.role == role]
 
+
     @classmethod
     def choose_random_band(
-        cls,
-        available_patches: List[Instrument],
+            cls,
+            available_patches: List[Instrument],
+            min_instruments: int = 4,
+            max_instruments: int = 8,
+            drum_mapping: DrumMapping | None = None,
+            drum_channel: int = 9,
     ) -> "BandConfiguration":
         """Erzeugt zufällig eine sinnvolle Bandbesetzung.
 
         Beschreibung:
-            Erzeugt aus einer Liste möglicher Instrumente zufällig eine sinnvolle
-            Bandbesetzung (z. B. immer Bass + Chords + 0–2 zusätzliche Instrumente).
+            Wählt aus einer Liste möglicher Instrumente eine zufällige Band,
+            bestehend aus mind. einem Chords-, Bass-, Pad- und Lead-Instrument.
+            Die Gesamtgröße der Band liegt zwischen min_instruments und
+            max_instruments (Standard: 4–8 Instrumente).
 
             Hinweis:
-                Da hier kein DrumMapping und kein Drumkanal übergeben wird, verwendet
-                diese Methode einen einfachen Standard:
-                - drum_channel = 9 (Index für GM-Drumkanal)
-                - ein leeres DrumMapping (kann später ersetzt werden)
-
-        Args:
-            available_patches: Liste aller verfügbaren Instrument-Objekte.
-
-        Returns:
-            Eine neue BandConfiguration mit zufällig gewählten Instrumenten.
-
-        Raises:
-            ValueError: Wenn keine Instrumente übergeben wurden.
+                Wenn kein DrumMapping übergeben wird, wird ein Dummy-Mapping
+                verwendet. In deinem Pipeline-Code kannst du ein echtes
+                DrumMapping übergeben.
         """
         if not available_patches:
             raise ValueError("Es wurden keine verfügbaren Instrumente übergeben.")
 
-        # Rollen-basierte Auswahl: mindestens ein Bass, mindestens ein Chords, Rest optional.
-        bass_instruments = [i for i in available_patches if i.role == "bass"]
-        chord_instruments = [i for i in available_patches if i.role == "chords"]
-        other_instruments = [
-            i for i in available_patches if i.role not in ("bass", "chords")
-        ]
+        # min_instruments darf nicht kleiner als 4 sein
+        if min_instruments < 4:
+            min_instruments = 4
+        if max_instruments < min_instruments:
+            max_instruments = min_instruments
+
+        # Verfügbare Instrumente nach Rollen gruppieren
+        chords = [i for i in available_patches if i.role == "chords"]
+        basses = [i for i in available_patches if i.role == "bass"]
+        pads = [i for i in available_patches if i.role == "pad"]
+        leads = [i for i in available_patches if i.role == "lead"]
+
+        # Sicherstellen, dass jede benötigte Rolle überhaupt existiert
+        for role_name, lst in [
+            ("chords", chords),
+            ("bass", basses),
+            ("pad", pads),
+            ("lead", leads),
+        ]:
+            if not lst:
+                raise ValueError(
+                    f"Es sind keine Instrumente mit Rolle {role_name!r} in available_patches vorhanden."
+                )
+
+        # Obergrenze durch verfügbare Patches begrenzen
+        max_possible = min(len(available_patches), max_instruments)
+        if max_possible < 4:
+            raise ValueError(
+                "Nicht genug Instrumente verfügbar, um mindestens 4 zu wählen."
+            )
+
+        # Bandgröße zufällig zwischen min_instruments und max_possible
+        band_size = random.randint(min_instruments, max_possible)
 
         chosen: List[Instrument] = []
 
-        if bass_instruments:
-            chosen.append(random.choice(bass_instruments))
-        if chord_instruments:
-            chosen.append(random.choice(chord_instruments))
+        # Mindestens je ein Instrument pro Rolle wählen
+        chosen.append(random.choice(chords))
+        chosen.append(random.choice(basses))
+        chosen.append(random.choice(pads))
+        chosen.append(random.choice(leads))
 
-        # 0–2 zusätzliche Instrumente (ohne Duplikate)
-        if other_instruments:
-            max_extras = min(2, len(other_instruments))
-            num_extras = random.randint(0, max_extras)
-            chosen.extend(random.sample(other_instruments, k=num_extras))
+        # Restliche Slots mit zufälligen Chords/Bass/Pad auffüllen (keine extra Leads)
+        remaining_slots = band_size - len(chosen)
+        if remaining_slots > 0:
+            extras_pool = [
+                i
+                for i in available_patches
+                if i.role in ("chords", "bass", "pad") and i not in chosen
+            ]
+            if extras_pool:
+                k = min(remaining_slots, len(extras_pool))
+                chosen.extend(random.sample(extras_pool, k=k))
 
-        # Fallback: Falls weder bass noch chords existieren (sehr untypisch), nimm einfach eins.
-        if not chosen:
-            chosen.append(random.choice(available_patches))
-
-        dummy_drum_mapping = DrumMapping(
-            note_to_class={},
-            class_to_notes={},
-            core_classes=[],
-        )
+        # Falls kein DrumMapping übergeben wurde: Dummy verwenden
+        if drum_mapping is None:
+            drum_mapping = DrumMapping(
+                note_to_class={},
+                class_to_notes={},
+                core_classes=[],
+            )
 
         return cls(
-            drum_channel=9,
-            drum_mapping=dummy_drum_mapping,
+            drum_channel=drum_channel,
+            drum_mapping=drum_mapping,
             instruments=chosen,
         )
 
@@ -173,177 +202,4 @@ class BandConfiguration:
         )
 
 
-# ---------------------------------------------------------------------------
-# Test-Helfer und Testfunktionen für BandConfiguration
-# ---------------------------------------------------------------------------
 
-def _create_test_drum_mapping_for_band_config() -> DrumMapping:
-    """Erzeugt ein minimales DrumMapping für BandConfiguration-Tests."""
-    print("\n[SETUP] Erzeuge Test-DrumMapping für BandConfiguration …")
-    dm = DrumMapping(
-        note_to_class={36: "KICK"},
-        class_to_notes={"KICK": [36]},
-        core_classes=["KICK"],
-    )
-    print(
-        f"[SETUP] DrumMapping(note_to_class={dm.note_to_class}, "
-        f"class_to_notes={dm.class_to_notes}, core_classes={dm.core_classes})"
-    )
-    return dm
-
-
-def _create_example_instruments_for_band() -> List[Instrument]:
-    """Erzeugt eine kleine Liste von Instrumenten mit unterschiedlichen Rollen."""
-    print("[SETUP] Erzeuge Beispiel-Instrumente für BandConfiguration …")
-    instruments = [
-        Instrument(
-            name="Acoustic Grand Piano",
-            gm_program=0,
-            channel=0,
-            volume=0.9,
-            pan=0.0,
-            role="chords",
-        ),
-        Instrument(
-            name="Electric Bass (finger)",
-            gm_program=33,
-            channel=1,
-            volume=0.9,
-            pan=-0.1,
-            role="bass",
-        ),
-        Instrument(
-            name="Synth Pad",
-            gm_program=88,
-            channel=2,
-            volume=0.7,
-            pan=0.2,
-            role="pad",
-        ),
-        Instrument(
-            name="Lead Synth",
-            gm_program=81,
-            channel=3,
-            volume=0.8,
-            pan=0.1,
-            role="lead",
-        ),
-    ]
-    for inst in instruments:
-        print(
-            f"  - Instrument(name={inst.name!r}, role={inst.role!r}, "
-            f"channel={inst.channel}, gm_program={inst.gm_program})"
-        )
-    print()
-    return instruments
-
-
-def _create_example_band_configuration() -> BandConfiguration:
-    """Erzeugt eine Beispiel-BandConfiguration für Tests."""
-    print("[SETUP] Erzeuge Beispiel-BandConfiguration …")
-    dm = _create_test_drum_mapping_for_band_config()
-    instruments = _create_example_instruments_for_band()
-    band = BandConfiguration(
-        drum_channel=9,
-        drum_mapping=dm,
-        instruments=instruments,
-    )
-    print(
-        f"[SETUP] BandConfiguration(drum_channel={band.drum_channel}, "
-        f"instruments={[i.name for i in band.instruments]})\n"
-    )
-    return band
-
-
-def test_get_instruments_by_role() -> None:
-    """Testet get_instruments_by_role für verschiedene Rollen."""
-    print("[TEST] test_get_instruments_by_role gestartet …")
-    band = _create_example_band_configuration()
-
-    chords = band.get_instruments_by_role("chords")
-    bass = band.get_instruments_by_role("bass")
-    pads = band.get_instruments_by_role("pad")
-    unknown = band.get_instruments_by_role("unknown_role")
-
-    print(f"  - chords: {[i.name for i in chords]}")
-    print(f"  - bass:   {[i.name for i in bass]}")
-    print(f"  - pads:   {[i.name for i in pads]}")
-    print(f"  - unknown:{[i.name for i in unknown]}")
-
-    assert len(chords) == 1 and chords[0].role == "chords"
-    assert len(bass) == 1 and bass[0].role == "bass"
-    assert len(pads) == 1 and pads[0].role == "pad"
-    assert len(unknown) == 0
-
-    print("[TEST] test_get_instruments_by_role erfolgreich abgeschlossen.\n")
-
-
-def test_choose_random_band_contains_bass_and_chords_if_available() -> None:
-    """Testet, ob choose_random_band Bass und Chords enthält, wenn verfügbar."""
-    print("[TEST] test_choose_random_band_contains_bass_and_chords_if_available gestartet …")
-    instruments = _create_example_instruments_for_band()
-
-    random.seed(123)  # für deterministisches Verhalten im Test
-    band = BandConfiguration.choose_random_band(instruments)
-
-    roles = [inst.role for inst in band.instruments]
-    print(f"  - Gewählte Instrumente: {[inst.name for inst in band.instruments]}")
-    print(f"  - Rollen: {roles}")
-    print(f"  - drum_channel: {band.drum_channel}")
-
-    assert any(r == "bass" for r in roles), "Es sollte mindestens ein Bass-Instrument geben."
-    assert any(r == "chords" for r in roles), "Es sollte mindestens ein Chords-Instrument geben."
-    assert band.drum_channel == 9
-
-    print("[TEST] test_choose_random_band_contains_bass_and_chords_if_available erfolgreich abgeschlossen.\n")
-
-
-def test_band_configuration_to_dict_and_from_dict_roundtrip() -> None:
-    """Testet, ob to_dict() und from_dict() zusammen konsistent sind."""
-    print("[TEST] test_band_configuration_to_dict_and_from_dict_roundtrip gestartet …")
-    original = _create_example_band_configuration()
-
-    data = original.to_dict()
-    print(f"  - to_dict() -> {data}")
-
-    restored = BandConfiguration.from_dict(data)
-    print(
-        f"  - Restored BandConfiguration: drum_channel={restored.drum_channel}, "
-        f"instruments={[i.name for i in restored.instruments]}"
-    )
-
-    assert restored.drum_channel == original.drum_channel
-    assert restored.drum_mapping.note_to_class == original.drum_mapping.note_to_class
-    assert restored.drum_mapping.class_to_notes == original.drum_mapping.class_to_notes
-    assert restored.drum_mapping.core_classes == original.drum_mapping.core_classes
-
-    original_names = [i.name for i in original.instruments]
-    restored_names = [i.name for i in restored.instruments]
-    assert restored_names == original_names
-
-    print("[TEST] test_band_configuration_to_dict_and_from_dict_roundtrip erfolgreich abgeschlossen.\n")
-
-
-def run_all_band_configuration_tests() -> None:
-    """Führt alle Tests für BandConfiguration aus und gibt eine Zusammenfassung aus."""
-    print("============================================================")
-    print("Starte BandConfiguration-Test-Suite …")
-    print("============================================================\n")
-
-    tests = [
-        test_get_instruments_by_role,
-        test_choose_random_band_contains_bass_and_chords_if_available,
-        test_band_configuration_to_dict_and_from_dict_roundtrip,
-    ]
-
-    for test_func in tests:
-        print(f"[RUN] {test_func.__name__} wird ausgeführt …")
-        test_func()
-
-    print("============================================================")
-    print("Alle BandConfiguration-Tests wurden erfolgreich ausgeführt.")
-    print("============================================================")
-
-
-if __name__ == "__main__":
-    run_all_band_configuration_tests()
