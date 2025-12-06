@@ -6,15 +6,15 @@ import random
 from .song_specification import SongSpecification
 from .instrument import Instrument
 
-from script.patterns.chord_patterns import (
+from script.instrument_patterns.chord_patterns import (
     CHORD_PATTERNS_BY_ROLE,
     ChordPattern,
 )
-from script.patterns.bass_patterns import (
+from script.instrument_patterns.bass_patterns import (
     BASS_PATTERNS_BY_INSTRUMENT,
     BassPattern,
 )
-from script.patterns.pad_lead_patterns import (
+from script.instrument_patterns.pad_lead_patterns import (
     PAD_PATTERNS_BY_INSTRUMENT,
     PadPattern,
     LEAD_PATTERNS_BY_INSTRUMENT,
