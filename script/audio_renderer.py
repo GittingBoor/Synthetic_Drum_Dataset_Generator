@@ -1,10 +1,60 @@
 from __future__ import annotations
 
-from typing import List
+import ctypes
 import os
-
 import pretty_midi
 import soundfile as sf
+
+
+def _disable_fluidsynth_warnings() -> None:
+    """Schaltet FluidSynth-Logs auf WARN/INFO/DBG stumm.
+
+    Wenn libfluidsynth nicht gefunden wird, passiert einfach nichts.
+    """
+    try:
+        lib = None
+
+        # Typische DLL-Namen unter Windows – evtl. musst du den richtigen einmal testen
+        dll_candidates = [
+            "libfluidsynth-3.dll",
+            "libfluidsynth-2.dll",
+            "libfluidsynth.dll",
+            "fluidsynth.dll",
+        ]
+
+        for name in dll_candidates:
+            try:
+                lib = ctypes.CDLL(name)
+                break
+            except OSError:
+                continue
+
+        if lib is None:
+            # Konnten die DLL nicht finden -> nichts machen
+            return
+
+        # Log-Level-Werte aus libfluidsynth (Reihenfolge laut Doku)
+        FLUID_PANIC = 0
+        FLUID_ERR = 1
+        FLUID_WARN = 2
+        FLUID_INFO = 3
+        FLUID_DBG = 4
+
+        # Signatur von fluid_set_log_function(int level, fluid_log_function_t fun, void* data)
+        lib.fluid_set_log_function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        )
+        lib.fluid_set_log_function.restype = ctypes.c_void_p
+
+        # WARN / INFO / DBG komplett abschalten
+        for level in (FLUID_WARN, FLUID_INFO, FLUID_DBG):
+            lib.fluid_set_log_function(level, None, None)
+
+    except Exception:
+        # Wenn irgendwas schiefgeht, wollen wir lieber weiterlaufen
+        return
 
 
 class AudioRenderer:
@@ -20,10 +70,10 @@ class AudioRenderer:
     """
 
     def __init__(
-        self,
-        soundfont_path: str,
-        output_sample_rate: int,
-        render_backend: str,
+            self,
+            soundfont_path: str,
+            output_sample_rate: int,
+            render_backend: str,
     ) -> None:
         """Konstruktor für den AudioRenderer.
 
@@ -34,15 +84,16 @@ class AudioRenderer:
             render_backend: Name des Rendering-Backends
                 (z. B. "fluidsynth", wird aktuell nur als Info gespeichert).
         """
-        self.soundfont_path: str = soundfont_path
-        self.output_sample_rate: int = int(output_sample_rate)
-        self.render_backend: str = render_backend
+        self.soundfont_path = soundfont_path
+        self.output_sample_rate = output_sample_rate
+        self.render_backend = render_backend
+        _disable_fluidsynth_warnings()
 
     def render_midi_to_wav(self, midi_path: str, output_wav_path: str) -> None:
         """Rendert eine einzelne MIDI-Datei in eine WAV-Datei.
 
         Beschreibung:
-            Lädt die MIDI-Datei mit pretty_midi, rendert sie über fluidsynth
+            Lädt die MIDI-Datei mit pretty_midi, rendert sie über FluidSynth
             mit der angegebenen Soundfont und speichert das Ergebnis als WAV.
 
         Args:
@@ -61,10 +112,13 @@ class AudioRenderer:
                 "Passe den Pfad in deiner Konfiguration an."
             )
 
+        # FluidSynth-Logs sicherheitshalber nochmal stummschalten (idempotent)
+        _disable_fluidsynth_warnings()
+
         # MIDI laden
         pm = pretty_midi.PrettyMIDI(midi_path)
 
-        # Audio über fluidsynth rendern (mono oder stereo, returns numpy array)
+        # Offline-Audio über FluidSynth rendern -> numpy-Array
         audio = pm.fluidsynth(
             fs=self.output_sample_rate,
             sf2_path=self.soundfont_path,
@@ -72,48 +126,3 @@ class AudioRenderer:
 
         # WAV schreiben
         sf.write(output_wav_path, audio, self.output_sample_rate)
-
-    def render_with_mix_variants(
-        self,
-        midi_path: str,
-        output_prefix: str,
-        drum_gain_db: List[float],
-    ) -> List[str]:
-        """Rendert mehrere Mix-Varianten eines Songs.
-
-        Aktuelle einfache Implementierung:
-            - Rendert für jeden Gain-Wert eine eigene Datei.
-            - Die Gain-Werte werden noch NICHT wirklich im Mix angewandt
-              (du bekommst identische Audios mit unterschiedlichen Dateinamen).
-            - Später kannst du hier z. B. per separatem Drum-Bus o. Ä. arbeiten.
-
-        Args:
-            midi_path: Pfad zur Eingabe-MIDI-Datei.
-            output_prefix: Präfix für die Ausgabedateien.
-            drum_gain_db: Liste von Drum-Gain-Werten in dB.
-
-        Returns:
-            Liste der Pfade zu den erzeugten Audiodateien.
-        """
-        output_paths: List[str] = []
-
-        for gain in drum_gain_db:
-            gain_int = int(round(gain))
-            if gain_int > 0:
-                gain_tag = f"plus{gain_int}dB"
-            elif gain_int < 0:
-                gain_tag = f"minus{abs(gain_int)}dB"
-            else:
-                gain_tag = "0dB"
-
-            output_wav_path = f"{output_prefix}_drums_{gain_tag}.wav"
-
-            # TODO: Gain wirklich im Mix anwenden.
-            # Aktuell: einfach normal rendern.
-            self.render_midi_to_wav(midi_path=midi_path, output_wav_path=output_wav_path)
-            output_paths.append(output_wav_path)
-
-        return output_paths
-
-
-

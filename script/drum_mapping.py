@@ -105,4 +105,48 @@ class DrumMapping:
         # Sortierung, damit das Ergebnis stabil / testbar ist.
         return sorted(classes)
 
+    @classmethod
+    def create_default(cls) -> DrumMapping:
+        """Erzeugt ein Standard-DrumMapping für GM-Drums.
 
+        Dieses Mapping deckt die wichtigsten Klassen für KICK, SNARE, HIHAT,
+        TOMS, CRASH und RIDE ab und kann als Default für das Dataset genutzt werden.
+        """
+
+        # Zentrale Definition: von Klasse -> Liste MIDI-Noten
+        class_to_notes: Dict[str, List[int]] = {
+            "KICK": [36],  # Bass Drum 1
+            "SNARE": [38, 40],  # Acoustic / Electric Snare
+            "HH_CLOSED": [42],  # Closed Hi-Hat
+            "HH_OPEN": [46],  # Open Hi-Hat
+            "TOM_LOW": [45, 47],  # Low / Low-Mid Tom
+            "TOM_MID": [48, 50],  # Hi-Mid / High Tom
+            "TOM_HIGH": [50],  # (alternativ anderer High-Tom)
+            "CRASH": [49, 57],  # Crash Cymbal 1 / 2
+            "RIDE": [51, 59],  # Ride Cymbal 1 / 2
+        }
+
+        # Inverses Mapping: von Note -> Klasse
+        note_to_class: Dict[int, str] = {}
+        for drum_class, notes in class_to_notes.items():
+            for note in notes:
+                note_to_class[note] = drum_class
+
+        # Kernklassen (für Training etc.)
+        core_classes: List[str] = [
+            "KICK",
+            "SNARE",
+            "HH_CLOSED",
+            "HH_OPEN",
+            "TOM_LOW",
+            "TOM_MID",
+            "TOM_HIGH",
+            "CRASH",
+            "RIDE",
+        ]
+
+        return cls(
+            note_to_class=note_to_class,
+            class_to_notes=class_to_notes,
+            core_classes=core_classes,
+        )

@@ -61,8 +61,7 @@ class HarmonyGenerator:
     def __init__(
             self,
             scale_vocab: Dict[str, List[int]],
-            chord_vocab: Dict[str, List[int]],
-            pattern_templates: Dict[str, Any],
+            chord_vocab: Dict[str, List[int]]
     ) -> None:
         """Konstruktor für den HarmonyGenerator.
 
@@ -76,7 +75,6 @@ class HarmonyGenerator:
         """
         self.scale_vocab = scale_vocab
         self.chord_vocab = chord_vocab
-        self.pattern_templates = pattern_templates
 
     # ------------------------------------------------------------------
     # Interne Hilfsfunktionen
