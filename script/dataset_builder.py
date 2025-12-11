@@ -18,6 +18,7 @@ from .dataset_presets import DatasetPreset, DATASET_PRESETS
 from .band_configuration import BandConfiguration
 from .instrument import Instrument
 
+
 class DatasetBuilder:
     # Typ-Annotationen für PyCharm / Mypy
     output_root_directory: str
@@ -35,23 +36,23 @@ class DatasetBuilder:
     random_seed: int
     examples: List[DatasetExample]
 
-    min_song_length_seconds: int
-    max_song_length_seconds: int
+    min_song_length_seconds: float
+    max_song_length_seconds: float
 
     def __init__(
-        self,
-        output_root_directory: str,
-        number_of_songs: int,
-        band_configuration_pool: List[BandConfiguration],
-        drum_pattern_generator: DrumPatternGenerator,
-        harmony_generator: HarmonyGenerator,
-        midi_song_builder: MidiSongBuilder,
-        audio_renderer: AudioRenderer,
-        label_extractor: LabelExtractor,
-        drum_mapping: DrumMapping,
-        random_seed: int,
-        min_song_length_seconds: int,
-        max_song_length_seconds: int,
+            self,
+            output_root_directory: str,
+            number_of_songs: int,
+            band_configuration_pool: List[BandConfiguration],
+            drum_pattern_generator: DrumPatternGenerator,
+            harmony_generator: HarmonyGenerator,
+            midi_song_builder: MidiSongBuilder,
+            audio_renderer: AudioRenderer,
+            label_extractor: LabelExtractor,
+            drum_mapping: DrumMapping,
+            random_seed: int,
+            min_song_length_seconds: float,
+            max_song_length_seconds: float,
     ) -> None:
         """Konstruktor für den DatasetBuilder.
 
@@ -82,8 +83,8 @@ class DatasetBuilder:
         self.random_seed = int(random_seed)
         self.examples = []
 
-        self.min_song_length_seconds = int(min_song_length_seconds)
-        self.max_song_length_seconds = int(max_song_length_seconds)
+        self.min_song_length_seconds = min_song_length_seconds
+        self.max_song_length_seconds = max_song_length_seconds
 
         # Root-Verzeichnis anlegen
         os.makedirs(self.output_root_directory, exist_ok=True)
@@ -146,7 +147,6 @@ class DatasetBuilder:
             class_to_notes=class_to_notes,
             core_classes=core_classes,
         )
-
 
     def create_instruments(self) -> List[Instrument]:
         """Definiert die Instrumente, die in der Band benutzt werden.
@@ -336,7 +336,6 @@ class DatasetBuilder:
         ]
         return instruments
 
-
     def create_band_configuration(self) -> BandConfiguration:
         """Erzeugt eine BandConfiguration mit Drums + den oben definierten Instrumenten."""
         instruments = self.create_instruments()
@@ -352,6 +351,13 @@ class DatasetBuilder:
         """Erzeugt einen einfachen HarmonyGenerator mit Standard-Vokabular."""
         scale_vocab = {
             "C major": [0, 2, 4, 5, 7, 9, 11],
+            "D major": [2, 4, 6, 7, 9, 11, 1],
+            "F major": [5, 7, 9, 10, 0, 2, 4],
+            "G major": [7, 9, 11, 0, 2, 4, 6],
+            "A major": [9, 11, 1, 2, 4, 6, 8],
+
+            "D minor": [2, 4, 5, 7, 9, 10, 0],
+            "E minor": [4, 6, 7, 9, 11, 0, 2],
             "A minor": [9, 11, 0, 2, 4, 5, 7],
         }
 
@@ -393,6 +399,104 @@ class DatasetBuilder:
             sys.stdout.write("\n")
             sys.stdout.flush()
 
+    def _load_existing_index_entries(self, output_root: str) -> list[dict]:
+        """Liest eine vorhandene dataset_index.json ein (falls vorhanden).
+
+        Gibt eine Liste von Dict-Einträgen zurück oder eine leere Liste,
+        wenn keine oder eine kaputte Datei vorhanden ist.
+        """
+        index_path = os.path.join(output_root, "dataset_index.json")
+        if not os.path.exists(index_path):
+            return []
+
+        try:
+            with open(index_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+        except (OSError, json.JSONDecodeError):
+            # Wenn etwas schiefgeht: so tun, als gäbe es keinen Index
+            pass
+        return []
+
+    def _determine_start_indices(
+            self,
+            existing_entries: list[dict],
+    ) -> tuple[int, int]:
+        """Bestimmt (next_song_index, seed_for_first_new_song).
+
+        - next_song_index: globaler Index für den nächsten Song (1-basiert)
+        - seed_for_first_new_song: Random-Seed für den ersten neu erzeugten Song
+        """
+        if not existing_entries:
+            # Noch kein Dataset vorhanden
+            next_song_index = 1
+            first_seed = self.random_seed
+            return next_song_index, first_seed
+
+        # Annahme: bisher immer fortlaufend ohne Lücken erzeugt
+        next_song_index = len(existing_entries) + 1
+
+        # Versuche, den Seed aus den bisherigen Einträgen zu lesen
+        seeds: list[int] = []
+        for entry in existing_entries:
+            # je nachdem, wie du den Seed nennst
+            seed_value = entry.get("random_seed") or entry.get("seed")
+            if isinstance(seed_value, int):
+                seeds.append(seed_value)
+
+        if seeds:
+            # Einfach den nächsthöheren Seed verwenden
+            first_seed = max(seeds) + 1
+        else:
+            # Fallback: verhalte dich wie früher, nur um bereits existierende
+            # Songs nach hinten verschoben
+            first_seed = self.random_seed + len(existing_entries)
+
+        return next_song_index, first_seed
+
+    @staticmethod
+    def _preset_to_dict(preset: DatasetPreset) -> dict[str, Any]:
+        """Serialisiert ein DatasetPreset in ein JSON-freundliches Dict."""
+        return {
+            "name": preset.name,
+            "tempo_bpm": preset.tempo_bpm,
+            "time_signature": list(preset.time_signature),
+            "key": preset.key,
+            "style": preset.style,
+            "drum_complexity": preset.drum_complexity,
+            "ghostnote_probability": preset.ghostnote_probability,
+            "fill_probability": preset.fill_probability,
+            "swing_amount": preset.swing_amount,
+            "pause_probability": preset.pause_probability,
+            "min_instruments": preset.min_instruments,
+            "max_instruments": preset.max_instruments,
+        }
+
+    @staticmethod
+    def _init_dataset_info(dataset_config: dict[str, Any]) -> dict[str, Any]:
+        """Erzeugt das Grundgerüst für dataset_info.json."""
+        return {
+            "dataset_config": dataset_config,  # globale Parameter (Root, Subdirs, Seeds, ...)
+            "presets": {},  # wird: name -> {preset-Daten + songs[]}
+        }
+
+    def _register_song_in_info(
+            self,
+            dataset_info: dict[str, Any],
+            preset: DatasetPreset,
+            song_basename: str,
+    ) -> None:
+        """Hängt einen Song-Basename an das passende Preset im dataset_info-Objekt an."""
+        presets_dict = dataset_info["presets"]
+
+        if preset.name not in presets_dict:
+            preset_dict = self._preset_to_dict(preset)
+            preset_dict["songs"] = []  # Liste der Song-Basenamen ohne Endungen
+            presets_dict[preset.name] = preset_dict
+
+        presets_dict[preset.name]["songs"].append(song_basename)
+
     def _ensure_output_subdirs(self) -> Dict[str, str]:
         """Stellt sicher, dass audio/, midi/ und labels/ existieren."""
         audio_dir = os.path.join(self.output_root_directory, "audio")
@@ -408,6 +512,202 @@ class DatasetBuilder:
             "midi": midi_dir,
             "labels": label_dir,
         }
+
+    # -----------------------------------------------------
+    # Hilfsmethoden für Verzeichnisse & Pfade
+    # -----------------------------------------------------
+    def _prepare_output_dirs(self, output_root: str) -> tuple[str, str, str]:
+        midi_dir = os.path.join(output_root, "midi")
+        audio_dir = os.path.join(output_root, "audio")
+        label_dir = os.path.join(output_root, "labels")
+
+        os.makedirs(midi_dir, exist_ok=True)
+        os.makedirs(audio_dir, exist_ok=True)
+        os.makedirs(label_dir, exist_ok=True)
+
+        return midi_dir, audio_dir, label_dir
+
+    def _build_paths_for_basename(
+            self,
+            midi_dir: str,
+            audio_dir: str,
+            label_dir: str,
+            basename: str,
+    ) -> tuple[str, str, str]:
+        midi_path = os.path.join(midi_dir, f"{basename}.mid")
+        audio_path = os.path.join(audio_dir, f"{basename}.wav")
+        label_path = os.path.join(label_dir, f"{basename}_labels.json")
+        return midi_path, audio_path, label_path
+
+        # -----------------------------------------------------
+        # Hilfsmethoden für Songlänge & SongSpecification
+        # -----------------------------------------------------
+
+    def _compute_dynamic_number_of_bars(
+            self,
+            preset: DatasetPreset,
+            dataset_config: dict[str, Any],
+            global_song_index: int,
+    ) -> int:
+        rng = random.Random(self.random_seed + global_song_index)
+
+        target_length_sec = rng.uniform(
+            dataset_config["min_song_length_seconds"],
+            dataset_config["max_song_length_seconds"],
+        )
+
+        seconds_per_beat = 60.0 / preset.tempo_bpm
+        numerator, denominator = preset.time_signature
+        beats_per_bar = numerator * (4.0 / denominator)
+        seconds_per_bar = seconds_per_beat * beats_per_bar
+
+        return max(1, int(round(target_length_sec / seconds_per_bar)))
+
+    def _create_band_configuration_for_preset(
+            self,
+            preset: DatasetPreset,
+    ) -> BandConfiguration:
+        return BandConfiguration.choose_random_band(
+            available_patches=self.create_instruments(),
+            min_instruments=preset.min_instruments,
+            max_instruments=preset.max_instruments,
+            drum_mapping=self.drum_mapping,
+            drum_channel=9,
+        )
+
+    def _create_song_specification_for_preset(
+            self,
+            preset: DatasetPreset,
+            number_of_bars: int,
+            band_configuration: BandConfiguration,
+            global_song_index: int,
+    ) -> SongSpecification:
+        song_spec = SongSpecification(
+            song_identifier="",  # wird gleich gesetzt
+            tempo_bpm=preset.tempo_bpm,
+            time_signature=preset.time_signature,
+            number_of_bars=number_of_bars,
+            key=preset.key,
+            style=preset.style,
+            band_configuration=band_configuration,
+            random_seed=self.random_seed + global_song_index,
+        )
+        random.seed(song_spec.random_seed)
+        return song_spec
+
+        # -----------------------------------------------------
+        # Drums + Harmony
+        # -----------------------------------------------------
+
+    def _update_drum_generator_from_preset(self, preset: DatasetPreset) -> None:
+        self.drum_pattern_generator.complexity = preset.drum_complexity
+        self.drum_pattern_generator.ghostnote_probability = preset.ghostnote_probability
+        self.drum_pattern_generator.fill_probability = preset.fill_probability
+        self.drum_pattern_generator.swing_amount = preset.swing_amount
+        self.drum_pattern_generator.pause_probability = preset.pause_probability
+
+    def _generate_drum_and_note_events(
+            self,
+            song_spec: SongSpecification,
+            band_configuration: BandConfiguration,
+    ) -> tuple[List[DrumEvent], List[NoteEvent]]:
+        drum_events: List[DrumEvent] = self.drum_pattern_generator.generate_drum_track(
+            song_spec
+        )
+
+        note_events: List[NoteEvent] = []
+
+        chord_instruments = band_configuration.get_instruments_by_role("chords")
+        bass_instruments = band_configuration.get_instruments_by_role("bass")
+        pad_instruments = band_configuration.get_instruments_by_role("pad")
+
+        for inst in chord_instruments:
+            note_events.extend(
+                self.harmony_generator.generate_chord_track(song_spec, inst)
+            )
+
+        for inst in bass_instruments:
+            note_events.extend(
+                self.harmony_generator.generate_bass_track(song_spec, inst)
+            )
+
+        if pad_instruments:
+            note_events.extend(
+                self.harmony_generator.generate_pad_or_lead_tracks(
+                    song_spec, pad_instruments
+                )
+            )
+
+        return drum_events, note_events
+
+        # -----------------------------------------------------
+        # MIDI, Audio, Labels, DatasetExample
+        # -----------------------------------------------------
+
+    def _build_midi_audio_labels_and_example(
+            self,
+            song_spec: SongSpecification,
+            drum_events: List[DrumEvent],
+            note_events: List[NoteEvent],
+            midi_path: str,
+            audio_path: str,
+            label_path: str,
+    ) -> DatasetExample:
+        # MIDI bauen + speichern
+        pm = self.midi_song_builder.build_pretty_midi(
+            song_specification=song_spec,
+            drum_events=drum_events,
+            note_events=note_events,
+        )
+        self.midi_song_builder.save_midi(pm, midi_path)
+
+        # Audio rendern
+        self.audio_renderer.render_midi_to_wav(
+            midi_path=midi_path,
+            output_wav_path=audio_path,
+        )
+
+        # Labels extrahieren
+        labels: List[LabelEvent] = self.label_extractor.extract_from_midi(midi_path)
+        self.label_extractor.save_labels_json(labels, label_path)
+
+        # DatasetExample erzeugen
+        example = DatasetExample(
+            song_identifier=song_spec.song_identifier,
+            audio_path=audio_path,
+            label_path=label_path,
+            midi_path=midi_path,
+            mix_variant="default",
+            song_specification=song_spec,
+        )
+        return example
+
+        # -----------------------------------------------------
+        # dataset_info.json
+        # -----------------------------------------------------
+
+    def _write_dataset_info(
+            self,
+            dataset_info: dict[str, Any],
+            output_root: str,
+    ) -> None:
+        info_path = os.path.join(output_root, "dataset_info.json")
+        with open(info_path, "w", encoding="utf-8") as f:
+            json.dump(dataset_info, f, indent=2, ensure_ascii=False)
+
+    def _load_existing_dataset_info(self, output_root: str) -> dict[str, Any] | None:
+        """Lädt eine bestehende dataset_info.json, falls vorhanden.
+
+        Returns:
+            Das geladene Dict oder None, wenn keine Datei existiert.
+        """
+        info_path = os.path.join(output_root, "dataset_info.json")
+        if not os.path.exists(info_path):
+            return None
+
+        with open(info_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
 
     def build_song_basename(
             song_specification: SongSpecification,
@@ -469,7 +769,22 @@ class DatasetBuilder:
         possible_keys = ["C major", "G major", "F major", "A minor", "E minor"]
         key = rnd.choice(possible_keys)
 
-        possible_styles = ["pop_straight", "pop_shuffled", "funk"]
+        possible_styles = [
+            "pop_straight",
+            "pop_shuffled",
+            "funk",
+            "rock",
+            "disco",
+            "shuffle",
+            "dance_pop",
+            "synth_pop",
+            "electropop",
+            "indie_pop",
+            "rnb_pop",
+            "funk_pop",
+            "pop_rock",
+            "latin_pop",
+        ]
         style = rnd.choice(possible_styles)
 
         # Band-Konfiguration wählen, falls vorhanden
@@ -492,8 +807,8 @@ class DatasetBuilder:
         return song_spec
 
     def generate_single_example(
-        self,
-        song_specification: SongSpecification,
+            self,
+            song_specification: SongSpecification,
     ) -> DatasetExample:
         """Erzeugt ein einzelnes DatasetExample mit allen Dateien.
 
@@ -592,32 +907,51 @@ class DatasetBuilder:
 
         return example
 
-    def save_index(self, path: str) -> None:
-        """Schreibt eine zentrale Index-Datei für den Datensatz.
+    def save_index(self, output_root: str) -> None:
+        """Schreibt/aktualisiert dataset_index.json im output_root.
 
-        Beschreibung:
-            Schreibt eine zentrale Index-Datei (z. B. "dataset_index.json"), in
-            der alle Beispiele mit ihren Pfaden und Metadaten verzeichnet sind.
-
-        Args:
-            path: Zielpfad für die Index-Datei.
+        - Wenn bereits eine dataset_index.json existiert, werden die neuen
+          Beispiele (self.examples) hinten angehängt.
+        - Wenn keine existiert, wird sie neu angelegt.
         """
-        if not self.examples:
-            print("[DatasetBuilder] WARNUNG: Keine Beispiele vorhanden. Index wird leer geschrieben.")
+        index_path = os.path.join(output_root, "dataset_index.json")
 
-        index_entries = [ex.to_index_entry() for ex in self.examples]
+        # Bisherige Einträge laden (falls vorhanden)
+        if os.path.exists(index_path):
+            with open(index_path, "r", encoding="utf-8") as f:
+                try:
+                    index_entries: Any = json.load(f)
+                except json.JSONDecodeError:
+                    index_entries = []
+            if not isinstance(index_entries, list):
+                index_entries = []
+        else:
+            index_entries = []
 
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        # Neue Beispiele anhängen
+        new_entries = [ex.to_index_entry() for ex in self.examples]
+        index_entries.extend(new_entries)
+
+        # Datei (neu) schreiben
+        with open(index_path, "w", encoding="utf-8") as f:
             json.dump(index_entries, f, indent=2, ensure_ascii=False)
 
-        print(f"[DatasetBuilder] Index-Datei geschrieben: {path}")
+    def to_index_entry(self) -> dict:
+        return {
+            "song_identifier": self.song_identifier,
+            "audio_path": self.audio_path,
+            "label_path": self.label_path,
+            "midi_path": self.midi_path,
+            "mix_variant": self.mix_variant,
+            "random_seed": self.song_specification.random_seed,
+            # ggf. weitere Metadaten
+        }
 
     def build_single_example(
-        self,
-        index: int,
-        song_spec: SongSpecification,
-        output_root: str,
+            self,
+            index: int,
+            song_spec: SongSpecification,
+            output_root: str,
     ) -> DatasetExample:
         """Erzeugt genau ein Dataset-Beispiel (MIDI, Audio, Labels + Indexeintrag)."""
 
@@ -691,77 +1025,108 @@ class DatasetBuilder:
         return example
 
     def build_dataset(
-        self,
-        presets: List[DatasetPreset],
-        output_root: str,
+            self,
+            presets: List[DatasetPreset],
+            output_root: str,
+            dataset_config: dict[str, Any],
     ) -> List[DatasetExample]:
-        """Erzeugt für alle Presets und Songs einen kompletten Datensatz."""
-        midi_dir = os.path.join(output_root, "midi")
-        audio_dir = os.path.join(output_root, "audio")
-        label_dir = os.path.join(output_root, "labels")
-
-        os.makedirs(midi_dir, exist_ok=True)
-        os.makedirs(audio_dir, exist_ok=True)
-        os.makedirs(label_dir, exist_ok=True)
+        """Erzeugt den kompletten Datensatz und schreibt dataset_info.json."""
+        # 1) Output-Verzeichnisse vorbereiten
+        midi_dir, audio_dir, label_dir = self._prepare_output_dirs(output_root)
 
         all_examples: List[DatasetExample] = []
-        global_song_index = 1
 
-        total_songs = self.number_of_songs * len(presets)
+        # 2) Bestehende dataset_info laden (falls vorhanden)
+        existing_info = self._load_existing_dataset_info(output_root)
 
+        if existing_info is not None:
+            # Weiter auf existierendem Datensatz aufbauen
+            dataset_info = existing_info
+
+            # Bisherige Song-Anzahl bestimmen (Summe aller songs-Listen)
+            existing_song_count = 0
+            for preset_dict in dataset_info.get("presets", {}).values():
+                existing_song_count += len(preset_dict.get("songs", []))
+        else:
+            # Neuer Datensatz
+            dataset_info = self._init_dataset_info(dataset_config)
+            existing_song_count = 0
+
+        # Startindex für neue Songs (hängt an vorhandene hinten an)
+        global_song_index: int = existing_song_count + 1
+
+        # Gesamtanzahl für die Progressbar: alte + neue Songs
+        total_songs = existing_song_count + self.number_of_songs * len(presets)
+
+        # 3) Hauptschleife über Presets und Songs
         for preset in presets:
             for _ in range(self.number_of_songs):
-                # Länge berechnen
-                rng = random.Random(self.random_seed + global_song_index)
-                target_length_sec = rng.uniform(
-                    self.min_song_length_seconds,
-                    self.max_song_length_seconds,
+                # 3.1) Anzahl Takte wählen
+                dynamic_number_of_bars = self._compute_dynamic_number_of_bars(
+                    preset=preset,
+                    dataset_config=dataset_config,
+                    global_song_index=global_song_index,
                 )
 
-                seconds_per_beat = 60.0 / preset.tempo_bpm
-                num, den = preset.time_signature
-                beats_per_bar = num * (4.0 / den)
-                seconds_per_bar = seconds_per_beat * beats_per_bar
-                dynamic_number_of_bars = max(
-                    1, int(round(target_length_sec / seconds_per_bar))
-                )
-
-                band_configuration = BandConfiguration.choose_random_band(
-                    available_patches=self.create_instruments(),
-                    min_instruments=preset.min_instruments,
-                    max_instruments=preset.max_instruments,
-                    drum_mapping=self.drum_mapping,
-                    drum_channel=9,
-                )
-
-                song_spec = SongSpecification(
-                    song_identifier="",
-                    tempo_bpm=preset.tempo_bpm,
-                    time_signature=preset.time_signature,
+                # 3.2) BandConfiguration + SongSpecification
+                band_configuration = self._create_band_configuration_for_preset(preset)
+                song_spec = self._create_song_specification_for_preset(
+                    preset=preset,
                     number_of_bars=dynamic_number_of_bars,
-                    key=preset.key,
-                    style=preset.style,
                     band_configuration=band_configuration,
-                    random_seed=self.random_seed + global_song_index,
+                    global_song_index=global_song_index,
                 )
 
-                # Drum-Generator Parameter laut Preset
-                self.drum_pattern_generator.complexity = preset.drum_complexity
-                self.drum_pattern_generator.ghostnote_probability = preset.ghostnote_probability
-                self.drum_pattern_generator.fill_probability = preset.fill_probability
-                self.drum_pattern_generator.swing_amount = preset.swing_amount
-                self.drum_pattern_generator.pause_probability = preset.pause_probability
+                # 3.3) Basename & Pfade
+                basename = DatasetBuilder.build_song_basename(
+                    song_specification=song_spec,
+                    song_index=global_song_index,
+                )
+                song_spec.song_identifier = basename
 
-                example = self.build_single_example(
-                    index=global_song_index,
+                midi_path, audio_path, label_path = self._build_paths_for_basename(
+                    midi_dir=midi_dir,
+                    audio_dir=audio_dir,
+                    label_dir=label_dir,
+                    basename=basename,
+                )
+
+                # 3.4) Drum-Generator gemäß Preset konfigurieren
+                self._update_drum_generator_from_preset(preset)
+
+                # 3.5) Events erzeugen
+                drum_events, note_events = self._generate_drum_and_note_events(
                     song_spec=song_spec,
-                    output_root=output_root,
+                    band_configuration=band_configuration,
+                )
+
+                # 3.6) Dateien erzeugen + DatasetExample bauen
+                example = self._build_midi_audio_labels_and_example(
+                    song_spec=song_spec,
+                    drum_events=drum_events,
+                    note_events=note_events,
+                    midi_path=midi_path,
+                    audio_path=audio_path,
+                    label_path=label_path,
                 )
                 all_examples.append(example)
-                self._print_progress(global_song_index, total_songs)
+
+                # 3.7) Song im dataset_info registrieren
+                self._register_song_in_info(
+                    dataset_info=dataset_info,
+                    preset=preset,
+                    song_basename=basename,
+                )
+
+                # 3.8) Fortschrittsanzeige
+                if total_songs > 0:
+                    self._print_progress(global_song_index, total_songs)
+
                 global_song_index += 1
 
         self.examples = all_examples
+
+        # 4) dataset_info.json schreiben
+        self._write_dataset_info(dataset_info=dataset_info, output_root=output_root)
+
         return all_examples
-
-

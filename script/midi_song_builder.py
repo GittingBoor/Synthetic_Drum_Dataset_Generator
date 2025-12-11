@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List
+from typing import List, Dict
 import os
 import pretty_midi
 
@@ -7,6 +7,7 @@ from .song_specification import SongSpecification
 from .drum_mapping import DrumMapping
 from .band_configuration import BandConfiguration
 from .instrument import Instrument
+
 
 class MidiSongBuilder:
     """Baut aus Events eine standardkonforme MIDI-Datei.
@@ -94,16 +95,16 @@ class MidiSongBuilder:
             initial_tempo=song_specification.tempo_bpm,
         )
 
-        # -------------------- Drums -------------------- #
-        # Ein Drum-Instrument (GM: Channel 10, in pretty_midi via is_drum=True)
+        # ------------------------------------------------------------
+        # 1) Drum-Instrument erzeugen (wird am ENDE angehängt -> unten)
+        # ------------------------------------------------------------
         drum_instrument = pretty_midi.Instrument(
-            program=0,  # ignoriert, wenn is_drum=True
+            program=0,          # ignoriert, wenn is_drum=True
             is_drum=True,
             name="Drums",
         )
 
         for ev in sorted(drum_events, key=lambda e: e.time_sec):
-            # Hole eine repräsentative Note für die Drum-Klasse
             try:
                 pitch = self.drum_mapping.get_primary_note_for_class(ev.drum_class)
             except KeyError:
@@ -111,8 +112,7 @@ class MidiSongBuilder:
                 continue
 
             start = float(ev.time_sec)
-            # Kurze Dauer für Drums, z. B. 50 ms
-            end = start + 0.05
+            end = start + 0.05  # kurze Dauer, z. B. 50 ms
 
             note = pretty_midi.Note(
                 velocity=int(ev.velocity),
@@ -122,25 +122,39 @@ class MidiSongBuilder:
             )
             drum_instrument.notes.append(note)
 
-        if drum_instrument.notes:
-            pm.instruments.append(drum_instrument)
+        # ------------------------------------------------------------
+        # 2) Harmonische Instrumente aufbauen (Kanäle, Programme, Rollen)
+        # ------------------------------------------------------------
+        # Map: channel -> pretty_midi.Instrument
+        channel_to_instrument: Dict[int, pretty_midi.Instrument] = {}
+        # Map: channel -> Rollen-Priorität (für Sortierung)
+        # niedrig = weiter oben in MuseScore
+        role_priority_map = {
+            "chords": 0,
+            "bass": 1,
+            "pad": 2,
+            "lead": 3,
+        }
+        channel_to_priority: Dict[int, int] = {}
 
-        # -------------------- Harmonische Instrumente -------------------- #
-                # Map: channel -> pretty_midi.Instrument
-        channel_to_instrument: dict[int, pretty_midi.Instrument] = {}
-
-        # Aus der BandConfiguration Instrumente anlegen (falls vorhanden)
         band_conf: BandConfiguration = song_specification.band_configuration
+
+        # Instrumente aus der BandConfiguration anlegen
         for inst in band_conf.instruments:
-            # Wir nehmen pro Kanal das erste Instrument, das wir finden.
-            if inst.channel in channel_to_instrument:
+            ch = int(inst.channel)
+            if ch in channel_to_instrument:
                 continue
+
             pm_inst = pretty_midi.Instrument(
                 program=int(inst.gm_program),
                 is_drum=False,
                 name=inst.name,
             )
-            channel_to_instrument[inst.channel] = pm_inst
+            channel_to_instrument[ch] = pm_inst
+
+            # Priorität nach Rolle (Fallback 99 für unbekannte Rollen)
+            prio = role_priority_map.get(inst.role, 99)
+            channel_to_priority[ch] = prio
 
         # Falls NoteEvents Kanäle nutzen, für die wir noch kein Instrument haben,
         # legen wir ein generisches Instrument an.
@@ -153,6 +167,7 @@ class MidiSongBuilder:
                     name=f"Channel_{ch}",
                 )
                 channel_to_instrument[ch] = pm_inst
+                channel_to_priority[ch] = 99  # generische Kanäle ans Ende der Melodiegruppe
 
         # Noten in die entsprechenden Instrumente einfügen
         for ne in note_events:
@@ -167,10 +182,30 @@ class MidiSongBuilder:
             )
             pm_inst.notes.append(note)
 
-        # Nur Instrumente mit Noten hinzufügen
-        for inst in channel_to_instrument.values():
-            if inst.notes:
-                pm.instruments.append(inst)
+        # ------------------------------------------------------------
+        # 3) Harmonische Instrumente sortiert hinzufügen
+        #     - zuerst nach Rollen-Priorität (chords, bass, pad, lead, ...)
+        #     - dann nach Kanalnummer (stabile Reihenfolge)
+        # ------------------------------------------------------------
+        instrument_entries = []
+        for ch, inst_pm in channel_to_instrument.items():
+            if not inst_pm.notes:
+                continue
+            prio = channel_to_priority.get(ch, 99)
+            instrument_entries.append((prio, ch, inst_pm))
+
+        # Sortierung: Rolle -> Kanal
+        instrument_entries.sort(key=lambda t: (t[0], t[1]))
+
+        for _, _, inst_pm in instrument_entries:
+            pm.instruments.append(inst_pm)
+
+        # ------------------------------------------------------------
+        # 4) Drums als LETZTES Instrument hinzufügen
+        #     -> in MuseScore typischerweise ganz unten
+        # ------------------------------------------------------------
+        if drum_instrument.notes:
+            pm.instruments.append(drum_instrument)
 
         return pm
 
@@ -220,10 +255,6 @@ class MidiSongBuilder:
 # Test-Helfer und Testfunktionen für MidiSongBuilder
 # ---------------------------------------------------------------------------
 
-# Für Tests brauchen wir DrumEvent und NoteEvent-Strukturen.
-# Wir definieren einfache Dummy-Klassen, die das gleiche Interface haben.
-
-
 class _TestDrumEvent:
     def __init__(self, time_sec: float, drum_class: str, velocity: int) -> None:
         self.time_sec = time_sec
@@ -245,4 +276,3 @@ class _TestNoteEvent:
         self.pitch = pitch
         self.velocity = velocity
         self.channel = channel
-

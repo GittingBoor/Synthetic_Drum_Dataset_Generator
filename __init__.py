@@ -38,10 +38,7 @@ MIDI_TICKS_PER_BEAT = 480  # alternative: 960 for higher timing resolution
 # ---------------------------------------------------------------------------
 
 # Number of songs per preset (total songs = NUMBER_OF_SONGS * NUMBER_OF_PRESETS)
-NUMBER_OF_SONGS = 5  # e.g. 5, 50, 100
-
-# How many different presets to use when calling build_dataset
-NUMBER_OF_PRESETS = 4  # e.g. 1 (single preset), 4, len(PRESET_NAMES_TO_USE)
+NUMBER_OF_SONGS = 1  # e.g. 5, 50, 100
 
 # Song length in seconds (a random target length in this range will be chosen per song)
 MIN_SONG_LENGTH_SECONDS = 20.0  # e.g. 5.0 for very short clips
@@ -58,12 +55,16 @@ INCLUDE_NON_DRUMS = True     # alternative: False if you want drum-only labels
 # Which presets to use when building a full dataset.
 # Use names from DATASET_PRESETS.keys().
 
-PRESET_NAMES_TO_USE: List[str] = [
-    "pop-straight__C-major__T120__Cmid__Smid__I4-8",
-    "pop-straight__C-major__T100__Clow__Slow__I4-6",
-    "funk__C-major__T105__Chigh__Shigh__I4-7",
-    "disco__C-major__T128__Chigh__Smid__I5-8",
-]  # alternative: list(DATASET_PRESETS.keys()) to use all presets
+PRESET_NAMES_TO_USE: List[str] = list(DATASET_PRESETS.keys())
+
+    # "pop-straight__C-major__T120__Cmid__Smid__I4-8",
+    # "pop-straight__C-major__T100__Clow__Slow__I4-6",
+    # "funk__C-major__T105__Chigh__Shigh__I4-7",
+    # "disco__C-major__T128__Chigh__Smid__I5-8",
+    # alternative: list(DATASET_PRESETS.keys()) to use all presets
+
+# How many different presets to use when calling build_dataset
+NUMBER_OF_PRESETS = len(PRESET_NAMES_TO_USE)  # e.g. 1 (single preset), 4, len(PRESET_NAMES_TO_USE)
 
 # Safety check: NUMBER_OF_PRESETS must not exceed the number of configured preset names
 assert NUMBER_OF_PRESETS <= len(PRESET_NAMES_TO_USE), (
@@ -71,6 +72,26 @@ assert NUMBER_OF_PRESETS <= len(PRESET_NAMES_TO_USE), (
     "Either reduce NUMBER_OF_PRESETS or add more preset names."
 )
 
+dataset_config = {
+    "output_root_directory": OUTPUT_ROOT_DIRECTORY,
+    "midi_subdir": MIDI_SUBDIR,
+    "audio_subdir": AUDIO_SUBDIR,
+    "label_subdir": LABEL_SUBDIR,
+    "soundfont_path": SOUNDFONT_PATH,
+    "audio_sample_rate": AUDIO_SAMPLE_RATE,
+    "audio_render_backend": AUDIO_RENDER_BACKEND,
+    "midi_sample_rate": MIDI_SAMPLE_RATE,
+    "midi_ticks_per_beat": MIDI_TICKS_PER_BEAT,
+    "number_of_songs": NUMBER_OF_SONGS,
+    "number_of_presets": NUMBER_OF_PRESETS,
+    "min_song_length_seconds": MIN_SONG_LENGTH_SECONDS,
+    "max_song_length_seconds": MAX_SONG_LENGTH_SECONDS,
+    "global_random_seed": GLOBAL_RANDOM_SEED,
+    "minimum_velocity": MINIMUM_VELOCITY,
+    "time_unit": TIME_UNIT,
+    "include_non_drums": INCLUDE_NON_DRUMS,
+    "preset_names_to_use": PRESET_NAMES_TO_USE,
+}
 
 def main() -> None:
     # ------------------------------------------------------------------
@@ -123,12 +144,11 @@ def main() -> None:
 
     # ------------------------------------------------------------------
     # 2) DatasetBuilder erstellen
-    #    (Achtung: Signatur muss zu deiner DatasetBuilder.__init__ passen!)
     # ------------------------------------------------------------------
     builder = DatasetBuilder(
         output_root_directory=OUTPUT_ROOT_DIRECTORY,
         number_of_songs=NUMBER_OF_SONGS,
-        band_configuration_pool=band_configuration_pool,  # kann auch [] sein
+        band_configuration_pool=band_configuration_pool,
         drum_pattern_generator=drum_pattern_generator,
         harmony_generator=harmony_generator,
         midi_song_builder=midi_song_builder,
@@ -137,37 +157,34 @@ def main() -> None:
         drum_mapping=drum_mapping,
         random_seed=GLOBAL_RANDOM_SEED,
         min_song_length_seconds=MIN_SONG_LENGTH_SECONDS,
-        max_song_length_seconds=MAX_SONG_LENGTH_SECONDS
+        max_song_length_seconds=MAX_SONG_LENGTH_SECONDS,
     )
 
     # ------------------------------------------------------------------
-    # 3) Datensatz bauen
+    # 3) Datensatz bauen (ggf. fortsetzen)
     # ------------------------------------------------------------------
-    # Falls deine build_dataset(self, presets, output_root) definiert ist:
     examples = builder.build_dataset(
         presets=selected_presets,
         output_root=OUTPUT_ROOT_DIRECTORY,
+        dataset_config=dataset_config,
     )
-    # Falls deine Signatur anders ist (z. B. build_dataset(self)), dann:
-    # examples = builder.build_dataset()
+    # ------------------------------------------------------------------
+    # 4) Index-Datei aktualisieren (Append-Logik steckt in builder.save_index)
+    # ------------------------------------------------------------------
+    builder.save_index(output_root=OUTPUT_ROOT_DIRECTORY)
 
-    # ------------------------------------------------------------------
-    # 4) Index-Datei schreiben
-    # ------------------------------------------------------------------
     index_path = os.path.join(OUTPUT_ROOT_DIRECTORY, "dataset_index.json")
-    index_entries = [ex.to_index_entry() for ex in examples]
-
-    with open(index_path, "w", encoding="utf-8") as f:
-        json.dump(index_entries, f, indent=2, ensure_ascii=False)
 
     print("\n============================================================")
-    print(f"Fertig! {len(examples)} Beispiele wurden erzeugt.")
+    print(f"Fertig! {len(examples)} neue Beispiele wurden erzeugt.")
     print(f"Output-Root: {OUTPUT_ROOT_DIRECTORY}")
     print(f"- MIDI   in: {os.path.join(OUTPUT_ROOT_DIRECTORY, MIDI_SUBDIR)}")
     print(f"- Audio  in: {os.path.join(OUTPUT_ROOT_DIRECTORY, AUDIO_SUBDIR)}")
     print(f"- Labels in: {os.path.join(OUTPUT_ROOT_DIRECTORY, LABEL_SUBDIR)}")
     print(f"- Index:     {index_path}")
     print("============================================================")
+
+
 
 
 if __name__ == "__main__":

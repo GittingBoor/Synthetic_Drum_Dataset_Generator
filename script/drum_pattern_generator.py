@@ -17,6 +17,14 @@ from .drum_patterns import (
     funk_patterns,
     disco_patterns,
     shuffle_patterns,
+    dance_pop_patterns,
+    synth_pop_patterns,
+    electropop_patterns,
+    indie_pop_patterns,
+    rnb_pop_patterns,
+    funk_pop_patterns,
+    pop_rock_patterns,
+    latin_pop_patterns,
 )
 
 
@@ -64,6 +72,47 @@ class DrumPatternGenerator:
         """Wählt je nach Stil das passende Pattern-Lexikon aus."""
         style = (style or "").lower()
 
+        if "dance" in style:
+            return (
+                dance_pop_patterns.PATTERNS,
+                dance_pop_patterns.STEP_RESOLUTION,
+            )
+        if "synth" in style:
+            return (
+                synth_pop_patterns.PATTERNS,
+                synth_pop_patterns.STEP_RESOLUTION,
+            )
+        if "electro" in style:
+            return (
+                electropop_patterns.PATTERNS,
+                electropop_patterns.STEP_RESOLUTION,
+            )
+        if "indie" in style:
+            return (
+                indie_pop_patterns.PATTERNS,
+                indie_pop_patterns.STEP_RESOLUTION,
+            )
+        if "rnb" in style or "r&b" in style:
+            return (
+                rnb_pop_patterns.PATTERNS,
+                rnb_pop_patterns.STEP_RESOLUTION,
+            )
+        if "funk-pop" in style:
+            return (
+                funk_pop_patterns.PATTERNS,
+                funk_pop_patterns.STEP_RESOLUTION,
+            )
+        if "pop-rock" in style:
+            return (
+                pop_rock_patterns.PATTERNS,
+                pop_rock_patterns.STEP_RESOLUTION,
+            )
+        if "latin" in style:
+            return (
+                latin_pop_patterns.PATTERNS,
+                latin_pop_patterns.STEP_RESOLUTION,
+            )
+
         if "funk" in style:
             return funk_patterns.PATTERNS, funk_patterns.STEP_RESOLUTION
         if "disco" in style:
@@ -79,8 +128,10 @@ class DrumPatternGenerator:
                 rock_patterns.STEP_RESOLUTION,
             )
 
-        # Default: moderner Pop
-        return pop_straight_patterns.PATTERNS, pop_straight_patterns.STEP_RESOLUTION
+        return (
+            pop_straight_patterns.PATTERNS,
+            pop_straight_patterns.STEP_RESOLUTION,
+        )
 
     @staticmethod
     def _pattern_str_to_array(pattern: str, subdivisions: int) -> np.ndarray:
