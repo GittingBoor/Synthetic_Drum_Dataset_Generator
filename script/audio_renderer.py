@@ -90,39 +90,28 @@ class AudioRenderer:
         _disable_fluidsynth_warnings()
 
     def render_midi_to_wav(self, midi_path: str, output_wav_path: str) -> None:
-        """Rendert eine einzelne MIDI-Datei in eine WAV-Datei.
-
-        Beschreibung:
-            Lädt die MIDI-Datei mit pretty_midi, rendert sie über FluidSynth
-            mit der angegebenen Soundfont und speichert das Ergebnis als WAV.
-
-        Args:
-            midi_path: Pfad zur Eingabe-MIDI-Datei.
-            output_wav_path: Pfad zur zu erzeugenden WAV-Datei.
-        """
-        # Ordner anlegen, falls nötig
         directory = os.path.dirname(output_wav_path)
         if directory and not os.path.exists(directory):
             os.makedirs(directory, exist_ok=True)
 
-        # Safety: existiert die Soundfont?
         if not os.path.exists(self.soundfont_path):
             raise FileNotFoundError(
                 f"Soundfont {self.soundfont_path!r} wurde nicht gefunden. "
                 "Passe den Pfad in deiner Konfiguration an."
             )
 
-        # FluidSynth-Logs sicherheitshalber nochmal stummschalten (idempotent)
         _disable_fluidsynth_warnings()
 
-        # MIDI laden
         pm = pretty_midi.PrettyMIDI(midi_path)
 
-        # Offline-Audio über FluidSynth rendern -> numpy-Array
         audio = pm.fluidsynth(
             fs=self.output_sample_rate,
             sf2_path=self.soundfont_path,
         )
 
-        # WAV schreiben
+        # Enforce mono
+        if hasattr(audio, "ndim") and audio.ndim == 2:
+            audio = audio.mean(axis=1)
+
         sf.write(output_wav_path, audio, self.output_sample_rate)
+

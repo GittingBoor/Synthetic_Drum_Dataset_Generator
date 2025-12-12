@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict
+from typing import Dict, Optional, List
 
 from .song_specification import SongSpecification
 
@@ -24,6 +24,12 @@ class DatasetExample:
         midi_path: str,
         mix_variant: str,
         song_specification: SongSpecification,
+
+        notes_npy_path: Optional[str] = None,
+        note_events_npy_path: Optional[str] = None,
+        n_frames: Optional[int] = None,
+        program: Optional[List[int]] = None,
+        is_drum: Optional[List[int]] = None,
     ) -> None:
         """Konstruktor für ein DatasetExample.
 
@@ -34,6 +40,11 @@ class DatasetExample:
             midi_path: Pfad zur zugehörigen MIDI-Datei.
             mix_variant: Name der Mix-Variante (z. B. "drums_loud").
             song_specification: Ursprüngliche SongSpecification dieses Beispiels.
+            notes_npy_path: Pfad zur notes-NumPy-Datei (YourMT3-kompatibel).
+            note_events_npy_path: Pfad zur note_events-NumPy-Datei (YourMT3-kompatibel).
+            n_frames: Anzahl Samples (Frames) der WAV-Datei bei 16 kHz.
+            program: Liste der verwendeten Programme (GM 0-127, Drums=128).
+            is_drum: Liste der Drum-Flags (0/1) passend zu program.
         """
         self.song_identifier = song_identifier
         self.audio_path = audio_path
@@ -41,6 +52,12 @@ class DatasetExample:
         self.midi_path = midi_path
         self.mix_variant = mix_variant
         self.song_specification = song_specification
+
+        self.notes_npy_path = notes_npy_path
+        self.note_events_npy_path = note_events_npy_path
+        self.n_frames = n_frames
+        self.program = program
+        self.is_drum = is_drum
 
     def to_index_entry(self) -> Dict:
         """Erzeugt einen Dictionary-Eintrag für eine Index-Datei.
@@ -73,7 +90,12 @@ class DatasetExample:
             "label_path": self.label_path,
             "midi_path": self.midi_path,
             "mix_variant": self.mix_variant,
+
+            "notes_npy_path": self.notes_npy_path,
+            "note_events_npy_path": self.note_events_npy_path,
+            "n_frames": self.n_frames,
+            "program": self.program,
+            "is_drum": self.is_drum,
+
             "song_specification": song_spec_dict,
         }
-
-

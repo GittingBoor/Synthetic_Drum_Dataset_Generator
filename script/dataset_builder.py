@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-import sys
-from typing import List, Dict, Any
-import os
 import json
+import os
 import random
+import sys
+from pathlib import Path
+from typing import Any, List, Tuple, Dict, Optional
+
+import numpy as np
+import pretty_midi
+import soundfile as sf
+
+from utils.note_event_dataclasses import Note as YourMT3Note
+from utils.note_event_dataclasses import NoteEvent as YourMT3NoteEvent
+
 
 from .audio_renderer import AudioRenderer
 from .drum_mapping import DrumMapping
@@ -498,50 +507,220 @@ class DatasetBuilder:
         presets_dict[preset.name]["songs"].append(song_basename)
 
     def _ensure_output_subdirs(self) -> Dict[str, str]:
-        """Stellt sicher, dass audio/, midi/ und labels/ existieren."""
         audio_dir = os.path.join(self.output_root_directory, "audio")
         midi_dir = os.path.join(self.output_root_directory, "midi")
-        label_dir = os.path.join(self.output_root_directory, "labels")
+        notes_dir = os.path.join(self.output_root_directory, "notes")
+        note_events_dir = os.path.join(self.output_root_directory, "note_events")
 
         os.makedirs(audio_dir, exist_ok=True)
         os.makedirs(midi_dir, exist_ok=True)
-        os.makedirs(label_dir, exist_ok=True)
+        os.makedirs(notes_dir, exist_ok=True)
+        os.makedirs(note_events_dir, exist_ok=True)
 
         return {
             "audio": audio_dir,
             "midi": midi_dir,
-            "labels": label_dir,
+            "notes": notes_dir,
+            "note_events": note_events_dir,
         }
 
     # -----------------------------------------------------
     # Hilfsmethoden für Verzeichnisse & Pfade
     # -----------------------------------------------------
-    def _prepare_output_dirs(self, output_root: str) -> tuple[str, str, str]:
+    def _prepare_output_dirs(self, output_root: str) -> tuple[str, str, str, str, str]:
         midi_dir = os.path.join(output_root, "midi")
         audio_dir = os.path.join(output_root, "audio")
         label_dir = os.path.join(output_root, "labels")
+        notes_dir = os.path.join(output_root, "notes")
+        note_events_dir = os.path.join(output_root, "note_events")
 
         os.makedirs(midi_dir, exist_ok=True)
         os.makedirs(audio_dir, exist_ok=True)
         os.makedirs(label_dir, exist_ok=True)
+        os.makedirs(notes_dir, exist_ok=True)
+        os.makedirs(note_events_dir, exist_ok=True)
 
-        return midi_dir, audio_dir, label_dir
+        return midi_dir, audio_dir, label_dir, notes_dir, note_events_dir
 
     def _build_paths_for_basename(
             self,
             midi_dir: str,
             audio_dir: str,
             label_dir: str,
+            notes_dir: str,
+            note_events_dir: str,
             basename: str,
-    ) -> tuple[str, str, str]:
+    ) -> tuple[str, str, str, str, str]:
         midi_path = os.path.join(midi_dir, f"{basename}.mid")
         audio_path = os.path.join(audio_dir, f"{basename}.wav")
-        label_path = os.path.join(label_dir, f"{basename}_labels.json")
-        return midi_path, audio_path, label_path
 
-        # -----------------------------------------------------
-        # Hilfsmethoden für Songlänge & SongSpecification
-        # -----------------------------------------------------
+        label_path = os.path.join(label_dir, f"{basename}_labels.json")
+        notes_npy_path = os.path.join(notes_dir, f"{basename}_notes.npy")
+        note_events_npy_path = os.path.join(note_events_dir, f"{basename}_note_events.npy")
+
+        return midi_path, audio_path, label_path, notes_npy_path, note_events_npy_path
+
+    def _get_wav_n_frames_16k_mono(self, wav_path: str) -> int:
+        info = sf.info(wav_path)
+
+        if int(info.samplerate) != 16000:
+            raise ValueError(f"WAV ist nicht 16 kHz: {wav_path} (sr={info.samplerate})")
+        if int(info.channels) != 1:
+            raise ValueError(f"WAV ist nicht mono: {wav_path} (channels={info.channels})")
+        if int(info.frames) <= 0:
+            raise ValueError(f"WAV hat keine Frames: {wav_path}")
+
+        return int(info.frames)
+
+    def _extract_notes_from_midi_all_instruments(self, midi_path: str) -> tuple[list, list[int], list[int]]:
+        pm = pretty_midi.PrettyMIDI(midi_path)
+
+        notes_out: list[YourMT3Note] = []
+        programs: list[int] = []
+        is_drum_flags: list[int] = []
+
+        seen_pairs: set[tuple[int, int]] = set()  # (is_drum_int, program)
+
+        for inst in pm.instruments:
+            inst_is_drum = bool(inst.is_drum)
+            program = 128 if inst_is_drum else int(inst.program)
+
+            pair = (1 if inst_is_drum else 0, program)
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                is_drum_flags.append(pair[0])
+                programs.append(pair[1])
+
+            for n in inst.notes:
+                onset = float(n.start)
+                offset = float(n.end)
+
+                # Safety: minimale Länge, sonst kann offset == onset vorkommen
+                if offset <= onset:
+                    offset = onset + 0.01
+
+                pitch = int(n.pitch)
+                vel = int(max(1, min(127, int(n.velocity))))
+
+                notes_out.append(
+                    YourMT3Note(
+                        is_drum=inst_is_drum,
+                        program=program,
+                        onset=onset,
+                        offset=offset,
+                        pitch=pitch,
+                        velocity=vel if not inst_is_drum else 1,  # drums oft binär, non-drums behalten velocity
+                    )
+                )
+
+        notes_out.sort(key=lambda x: (x.onset, x.is_drum, x.program, x.velocity, x.pitch, x.offset))
+        return notes_out, programs, is_drum_flags
+
+    def _extract_drum_notes_from_midi(self, midi_path: str) -> List[YourMT3Note]:
+        """
+        Extrahiert nur Drum-Noten (pretty_midi Instrumente mit is_drum=True)
+        und erzeugt YourMT3-kompatible Note-Objekte.
+
+        YourMT3-Konvention:
+        - drums: program=128, is_drum=True
+        - binary velocity: 1
+        - offset für drums ist egal (drum hat in note_events keine offsets),
+          aber Note braucht offset -> wir setzen min. onset+0.01
+        """
+        pm = pretty_midi.PrettyMIDI(midi_path)
+
+        notes: List[YourMT3Note] = []
+        for inst in pm.instruments:
+            if not inst.is_drum:
+                continue
+            for n in inst.notes:
+                onset = float(n.start)
+                # drum offset minimal 10ms, kompatibel mit deren Konstante 0.01s :contentReference[oaicite:3]{index=3}
+                offset = max(float(n.end), onset + 0.01)
+                pitch = int(n.pitch)
+                notes.append(
+                    YourMT3Note(
+                        is_drum=True,
+                        program=128,
+                        onset=onset,
+                        offset=offset,
+                        pitch=pitch,
+                        velocity=1,
+                    )
+                )
+
+        # sort wie in YourMT3 (onset, is_drum, program, velocity, pitch, offset) :contentReference[oaicite:4]{index=4}
+        notes.sort(key=lambda x: (x.onset, x.is_drum, x.program, x.velocity, x.pitch, x.offset))
+        return notes
+
+
+    def _notes_to_note_events_all_instruments(self, notes: list[YourMT3Note]) -> list[YourMT3NoteEvent]:
+        events: list[YourMT3NoteEvent] = []
+
+        for note in notes:
+            # onset
+            events.append(
+                YourMT3NoteEvent(
+                    is_drum=note.is_drum,
+                    program=note.program,
+                    time=note.onset,
+                    velocity=int(note.velocity),
+                    pitch=int(note.pitch),
+                )
+            )
+
+            # offset nur für non-drums
+            if not note.is_drum:
+                events.append(
+                    YourMT3NoteEvent(
+                        is_drum=False,
+                        program=note.program,
+                        time=note.offset,
+                        velocity=0,
+                        pitch=int(note.pitch),
+                    )
+                )
+
+        events.sort(key=lambda e: (0.0 if e.time is None else e.time, e.is_drum, e.program, e.velocity, e.pitch))
+        return events
+
+    def _write_notes_and_note_events_npy(
+            self,
+            song_id: str,
+            midi_path: str,
+            audio_path: str,
+            notes_npy_path: str,
+            note_events_npy_path: str,
+    ) -> tuple[int, list[int], list[int]]:
+        n_frames = self._get_wav_n_frames_16k_mono(audio_path)
+        duration_sec = float(n_frames) / 16000.0
+
+        notes, programs, is_drum_flags = self._extract_notes_from_midi_all_instruments(midi_path)
+        note_events = self._notes_to_note_events_all_instruments(notes)
+
+        notes_payload = {
+            "synthetic_id": song_id,
+            "duration_sec": duration_sec,
+            "program": programs,
+            "is_drum": is_drum_flags,
+            "notes": notes,
+            "start_time": 0.0,
+        }
+
+        note_events_payload = {
+            "synthetic_id": song_id,
+            "duration_sec": duration_sec,
+            "program": programs,
+            "is_drum": is_drum_flags,
+            "note_events": [note_events],  # bundle-like shape
+            "tie_note_events": [[]],  # bundle-like shape
+            "start_times": [0.0],  # bundle-like shape
+        }
+
+        np.save(notes_npy_path, notes_payload, allow_pickle=True, fix_imports=False)
+        np.save(note_events_npy_path, note_events_payload, allow_pickle=True, fix_imports=False)
+
+        return n_frames, programs, is_drum_flags
 
     def _compute_dynamic_number_of_bars(
             self,
@@ -651,6 +830,8 @@ class DatasetBuilder:
             note_events: List[NoteEvent],
             midi_path: str,
             audio_path: str,
+            notes_npy_path: str,
+            note_events_npy_path: str,
             label_path: str,
     ) -> DatasetExample:
         # MIDI bauen + speichern
@@ -667,9 +848,18 @@ class DatasetBuilder:
             output_wav_path=audio_path,
         )
 
-        # Labels extrahieren
+        # Labels (optional, bleibt als Debug/Legacy)
         labels: List[LabelEvent] = self.label_extractor.extract_from_midi(midi_path)
         self.label_extractor.save_labels_json(labels, label_path)
+
+        # notes.npy + note_events.npy + n_frames + (program/is_drum)
+        n_frames, programs, is_drum_flags = self._write_notes_and_note_events_npy(
+            song_id=song_spec.song_identifier,
+            midi_path=midi_path,
+            audio_path=audio_path,
+            notes_npy_path=notes_npy_path,
+            note_events_npy_path=note_events_npy_path,
+        )
 
         # DatasetExample erzeugen
         example = DatasetExample(
@@ -679,12 +869,13 @@ class DatasetBuilder:
             midi_path=midi_path,
             mix_variant="default",
             song_specification=song_spec,
+            notes_npy_path=notes_npy_path,
+            note_events_npy_path=note_events_npy_path,
+            n_frames=n_frames,
+            program=programs,
+            is_drum=is_drum_flags,
         )
         return example
-
-        # -----------------------------------------------------
-        # dataset_info.json
-        # -----------------------------------------------------
 
     def _write_dataset_info(
             self,
@@ -806,117 +997,9 @@ class DatasetBuilder:
 
         return song_spec
 
-    def generate_single_example(
-            self,
-            song_specification: SongSpecification,
-    ) -> DatasetExample:
-        """Erzeugt ein einzelnes DatasetExample mit allen Dateien.
-
-        Beschreibung:
-            Führt alle Schritte für genau einen Song aus (Drums generieren,
-            Harmonien generieren, MIDI bauen, Audio rendern, Labels extrahieren)
-            und verpackt das Ergebnis in ein DatasetExample.
-
-        Args:
-            song_specification: Spezifikation des Songs, der generiert werden soll.
-
-        Returns:
-            Ein vollständig erzeugtes DatasetExample.
-        """
-        dirs = self._ensure_output_subdirs()
-        song_id = song_specification.song_identifier
-
-        # Pfade festlegen
-        midi_path = os.path.join(dirs["midi"], f"{song_id}.mid")
-        audio_path = os.path.join(dirs["audio"], f"{song_id}.wav")
-        label_path = os.path.join(dirs["labels"], f"{song_id}_labels.json")
-        mix_variant = "default"
-
-        # 1) Drum-Events generieren
-        drum_events = self.drum_pattern_generator.generate_drum_track(song_specification)
-
-        # 2) Harmonien generieren (falls Band-Konfiguration vorhanden)
-        note_events: List[Any] = []
-
-        band_cfg = getattr(song_specification, "band_configuration", None)
-
-        if band_cfg is not None:
-            # Versuche, Rollen zu nutzen, falls BandConfiguration so etwas bietet
-            chords_instruments: List[Any] = []
-            bass_instruments: List[Any] = []
-            pad_instruments: List[Any] = []
-
-            if hasattr(band_cfg, "get_instruments_by_role"):
-                chords_instruments = band_cfg.get_instruments_by_role("chords")
-                bass_instruments = band_cfg.get_instruments_by_role("bass")
-                pad_instruments = band_cfg.get_instruments_by_role("pad")
-            else:
-                # Falls es diese Methode nicht gibt, nimm einfach alle Instrumente als "chords"
-                chords_instruments = getattr(band_cfg, "instruments", [])
-
-            # Akkordspur (nur erstes Chord-Instrument, um es einfach zu halten)
-            if chords_instruments:
-                chord_instr = chords_instruments[0]
-                chord_events = self.harmony_generator.generate_chord_track(
-                    song_specification,
-                    chord_instr,
-                )
-                note_events.extend(chord_events)
-
-            # Bassspur
-            if bass_instruments:
-                bass_instr = bass_instruments[0]
-                bass_events = self.harmony_generator.generate_bass_track(
-                    song_specification,
-                    bass_instr,
-                )
-                note_events.extend(bass_events)
-
-            # Pads/Leads
-            if pad_instruments:
-                pad_events = self.harmony_generator.generate_pad_or_lead_tracks(
-                    song_specification,
-                    pad_instruments,
-                )
-                note_events.extend(pad_events)
-
-        # 3) MIDI-Datei bauen und speichern
-        pretty_midi_obj = self.midi_song_builder.build_pretty_midi(
-            song_specification,
-            drum_events,
-            note_events,
-        )
-        self.midi_song_builder.save_midi(pretty_midi_obj, midi_path)
-
-        # 4) Audio rendern
-        self.audio_renderer.render_midi_to_wav(midi_path, audio_path)
-
-        # 5) Labels erzeugen und speichern
-        labels = self.label_extractor.extract_from_midi(midi_path)
-        self.label_extractor.save_labels_json(labels, label_path)
-
-        # 6) DatasetExample erzeugen
-        example = DatasetExample(
-            song_identifier=song_id,
-            audio_path=audio_path,
-            label_path=label_path,
-            midi_path=midi_path,
-            mix_variant=mix_variant,
-            song_specification=song_specification,
-        )
-
-        return example
-
     def save_index(self, output_root: str) -> None:
-        """Schreibt/aktualisiert dataset_index.json im output_root.
-
-        - Wenn bereits eine dataset_index.json existiert, werden die neuen
-          Beispiele (self.examples) hinten angehängt.
-        - Wenn keine existiert, wird sie neu angelegt.
-        """
         index_path = os.path.join(output_root, "dataset_index.json")
 
-        # Bisherige Einträge laden (falls vorhanden)
         if os.path.exists(index_path):
             with open(index_path, "r", encoding="utf-8") as f:
                 try:
@@ -928,13 +1011,79 @@ class DatasetBuilder:
         else:
             index_entries = []
 
-        # Neue Beispiele anhängen
         new_entries = [ex.to_index_entry() for ex in self.examples]
         index_entries.extend(new_entries)
 
-        # Datei (neu) schreiben
         with open(index_path, "w", encoding="utf-8") as f:
             json.dump(index_entries, f, indent=2, ensure_ascii=False)
+
+    def _split_examples(
+            self,
+            examples: List[DatasetExample],
+            train_ratio: float = 0.80,
+            val_ratio: float = 0.10,
+            test_ratio: float = 0.10,
+            seed: int = 1234,
+    ) -> tuple[List[DatasetExample], List[DatasetExample], List[DatasetExample]]:
+        if abs((train_ratio + val_ratio + test_ratio) - 1.0) > 1e-9:
+            raise ValueError("train/val/test ratios müssen zusammen 1.0 ergeben.")
+
+        examples_copy = list(examples)
+        rnd = random.Random(int(seed))
+        rnd.shuffle(examples_copy)
+
+        n_total = len(examples_copy)
+        n_train = int(n_total * train_ratio)
+        n_val = int(n_total * val_ratio)
+
+        train = examples_copy[:n_train]
+        val = examples_copy[n_train:n_train + n_val]
+        test = examples_copy[n_train + n_val:]
+
+        return train, val, test
+
+    def _as_posix_rel_from_amt_src(self, abs_path: str) -> str:
+        p = Path(abs_path)
+
+        parts = p.parts
+        if "data" not in parts:
+            return p.as_posix()
+
+        data_index = parts.index("data")
+        rel_from_repo_root = Path(*parts[data_index:]).as_posix()
+        return f"../../{rel_from_repo_root}"
+
+    def _make_yourmt3_file_list_entry(self, example: DatasetExample) -> dict[str, Any]:
+        return {
+            "synthetic_id": example.song_identifier,
+            "n_frames": int(example.n_frames) if example.n_frames is not None else None,
+            "stem_file": None,
+            "mix_audio_file": self._as_posix_rel_from_amt_src(example.audio_path),
+            "notes_file": self._as_posix_rel_from_amt_src(example.notes_npy_path),
+            "note_events_file": self._as_posix_rel_from_amt_src(example.note_events_npy_path),
+            "midi_file": self._as_posix_rel_from_amt_src(example.midi_path),
+            "program": list(example.program) if example.program is not None else [128],
+            "is_drum": list(example.is_drum) if example.is_drum is not None else [1],
+        }
+
+    def _write_yourmt3_file_list_json(
+            self,
+            data_root: str,
+            filename: str,
+            examples: List[DatasetExample],
+    ) -> str:
+        indexes_dir = os.path.join(data_root, "yourmt3_indexes")
+        os.makedirs(indexes_dir, exist_ok=True)
+
+        payload: dict[str, Any] = {}
+        for i, ex in enumerate(examples):
+            payload[str(i)] = self._make_yourmt3_file_list_entry(ex)
+
+        out_path = os.path.join(indexes_dir, filename)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=4)
+
+        return out_path
 
     def to_index_entry(self) -> dict:
         return {
@@ -942,87 +1091,14 @@ class DatasetBuilder:
             "audio_path": self.audio_path,
             "label_path": self.label_path,
             "midi_path": self.midi_path,
+            "notes_npy_path": self.notes_npy_path,
+            "note_events_npy_path": self.note_events_npy_path,
+            "n_frames": self.n_frames,
+            "program": self.program,
+            "is_drum": self.is_drum,
             "mix_variant": self.mix_variant,
             "random_seed": self.song_specification.random_seed,
-            # ggf. weitere Metadaten
         }
-
-    def build_single_example(
-            self,
-            index: int,
-            song_spec: SongSpecification,
-            output_root: str,
-    ) -> DatasetExample:
-        """Erzeugt genau ein Dataset-Beispiel (MIDI, Audio, Labels + Indexeintrag)."""
-
-        midi_dir = os.path.join(output_root, "midi")
-        audio_dir = os.path.join(output_root, "audio")
-        label_dir = os.path.join(output_root, "labels")
-
-        os.makedirs(midi_dir, exist_ok=True)
-        os.makedirs(audio_dir, exist_ok=True)
-        os.makedirs(label_dir, exist_ok=True)
-
-        basename = DatasetBuilder.build_song_basename(song_specification=song_spec,
-                                                      song_index=index)
-        song_spec.song_identifier = basename
-
-        midi_path = os.path.join(midi_dir, f"{basename}.mid")
-        audio_path = os.path.join(audio_dir, f"{basename}.wav")
-        label_path = os.path.join(label_dir, f"{basename}_labels.json")
-
-        # 6) Drums
-        drum_events: List[DrumEvent] = self.drum_pattern_generator.generate_drum_track(
-            song_spec
-        )
-
-        # 7) Harmonien
-        note_events: List[NoteEvent] = []
-
-        band_configuration = song_spec.band_configuration
-        chord_instruments = band_configuration.get_instruments_by_role("chords")
-        bass_instruments = band_configuration.get_instruments_by_role("bass")
-        pad_instruments = band_configuration.get_instruments_by_role("pad")
-
-        for inst in chord_instruments:
-            note_events.extend(self.harmony_generator.generate_chord_track(song_spec, inst))
-
-        for inst in bass_instruments:
-            note_events.extend(self.harmony_generator.generate_bass_track(song_spec, inst))
-
-        if pad_instruments:
-            note_events.extend(
-                self.harmony_generator.generate_pad_or_lead_tracks(song_spec, pad_instruments)
-            )
-
-        # 8) MIDI
-        pm = self.midi_song_builder.build_pretty_midi(
-            song_specification=song_spec,
-            drum_events=drum_events,
-            note_events=note_events,
-        )
-        self.midi_song_builder.save_midi(pm, midi_path)
-
-        # 9) Audio
-        self.audio_renderer.render_midi_to_wav(
-            midi_path=midi_path,
-            output_wav_path=audio_path,
-        )
-
-        # 10) Labels
-        labels: List[LabelEvent] = self.label_extractor.extract_from_midi(midi_path)
-        self.label_extractor.save_labels_json(labels, label_path)
-
-        # 11) Example
-        example = DatasetExample(
-            song_identifier=song_spec.song_identifier,
-            audio_path=audio_path,
-            label_path=label_path,
-            midi_path=midi_path,
-            mix_variant="default",
-            song_specification=song_spec,
-        )
-        return example
 
     def build_dataset(
             self,
@@ -1030,9 +1106,9 @@ class DatasetBuilder:
             output_root: str,
             dataset_config: dict[str, Any],
     ) -> List[DatasetExample]:
-        """Erzeugt den kompletten Datensatz und schreibt dataset_info.json."""
         # 1) Output-Verzeichnisse vorbereiten
-        midi_dir, audio_dir, label_dir = self._prepare_output_dirs(output_root)
+        midi_dir, audio_dir, label_dir, notes_dir, note_events_dir = self._prepare_output_dirs(output_root)
+
 
         all_examples: List[DatasetExample] = []
 
@@ -1040,35 +1116,26 @@ class DatasetBuilder:
         existing_info = self._load_existing_dataset_info(output_root)
 
         if existing_info is not None:
-            # Weiter auf existierendem Datensatz aufbauen
             dataset_info = existing_info
-
-            # Bisherige Song-Anzahl bestimmen (Summe aller songs-Listen)
             existing_song_count = 0
             for preset_dict in dataset_info.get("presets", {}).values():
                 existing_song_count += len(preset_dict.get("songs", []))
         else:
-            # Neuer Datensatz
             dataset_info = self._init_dataset_info(dataset_config)
             existing_song_count = 0
 
-        # Startindex für neue Songs (hängt an vorhandene hinten an)
         global_song_index: int = existing_song_count + 1
-
-        # Gesamtanzahl für die Progressbar: alte + neue Songs
         total_songs = existing_song_count + self.number_of_songs * len(presets)
 
         # 3) Hauptschleife über Presets und Songs
         for preset in presets:
             for _ in range(self.number_of_songs):
-                # 3.1) Anzahl Takte wählen
                 dynamic_number_of_bars = self._compute_dynamic_number_of_bars(
                     preset=preset,
                     dataset_config=dataset_config,
                     global_song_index=global_song_index,
                 )
 
-                # 3.2) BandConfiguration + SongSpecification
                 band_configuration = self._create_band_configuration_for_preset(preset)
                 song_spec = self._create_song_specification_for_preset(
                     preset=preset,
@@ -1077,48 +1144,46 @@ class DatasetBuilder:
                     global_song_index=global_song_index,
                 )
 
-                # 3.3) Basename & Pfade
                 basename = DatasetBuilder.build_song_basename(
                     song_specification=song_spec,
                     song_index=global_song_index,
                 )
                 song_spec.song_identifier = basename
 
-                midi_path, audio_path, label_path = self._build_paths_for_basename(
+                midi_path, audio_path, label_path, notes_npy_path, note_events_npy_path = self._build_paths_for_basename(
                     midi_dir=midi_dir,
                     audio_dir=audio_dir,
                     label_dir=label_dir,
+                    notes_dir=notes_dir,
+                    note_events_dir=note_events_dir,
                     basename=basename,
                 )
 
-                # 3.4) Drum-Generator gemäß Preset konfigurieren
                 self._update_drum_generator_from_preset(preset)
 
-                # 3.5) Events erzeugen
                 drum_events, note_events = self._generate_drum_and_note_events(
                     song_spec=song_spec,
                     band_configuration=band_configuration,
                 )
 
-                # 3.6) Dateien erzeugen + DatasetExample bauen
                 example = self._build_midi_audio_labels_and_example(
                     song_spec=song_spec,
                     drum_events=drum_events,
                     note_events=note_events,
                     midi_path=midi_path,
                     audio_path=audio_path,
+                    notes_npy_path=notes_npy_path,
+                    note_events_npy_path=note_events_npy_path,
                     label_path=label_path,
                 )
                 all_examples.append(example)
 
-                # 3.7) Song im dataset_info registrieren
                 self._register_song_in_info(
                     dataset_info=dataset_info,
                     preset=preset,
                     song_basename=basename,
                 )
 
-                # 3.8) Fortschrittsanzeige
                 if total_songs > 0:
                     self._print_progress(global_song_index, total_songs)
 
@@ -1126,7 +1191,51 @@ class DatasetBuilder:
 
         self.examples = all_examples
 
+        data_root = os.path.dirname(output_root)  # "data"
+        train, val, test = self._split_examples(
+            examples=all_examples,
+            train_ratio=float(dataset_config.get("train_ratio", 0.80)),
+            val_ratio=float(dataset_config.get("val_ratio", 0.10)),
+            test_ratio=float(dataset_config.get("test_ratio", 0.10)),
+            seed=int(dataset_config.get("split_seed", 1234)),
+        )
+
+        self._write_yourmt3_file_list_json(data_root, "synthetic_drums_train_file_list.json", train)
+        self._write_yourmt3_file_list_json(data_root, "synthetic_drums_validation_file_list.json", val)
+        self._write_yourmt3_file_list_json(data_root, "synthetic_drums_test_file_list.json", test)
+
         # 4) dataset_info.json schreiben
         self._write_dataset_info(dataset_info=dataset_info, output_root=output_root)
 
+        # 5) dataset_index.json schreiben/aktualisieren (optional, aber sinnvoll)
+        self.save_index(output_root)
+
+        # 6) YourMT3 Index-Splits schreiben
+        # output_root ist z. B. data/synthetic_drums_yourmt3_16k
+        output_data_root = os.path.dirname(output_root)  # => data/
+        train, val, test = self._split_examples(
+            examples=all_examples,
+            train_ratio=dataset_config.get("train_ratio", 0.80),
+            val_ratio=dataset_config.get("val_ratio", 0.10),
+            test_ratio=dataset_config.get("test_ratio", 0.10),
+            seed=int(dataset_config.get("split_seed", 1234)),
+        )
+
+        self._write_yourmt3_file_list_json(
+            data_root=output_data_root,
+            filename="synthetic_drums_train_file_list.json",
+            examples=train,
+        )
+        self._write_yourmt3_file_list_json(
+            data_root=output_data_root,
+            filename="synthetic_drums_validation_file_list.json",
+            examples=val,
+        )
+        self._write_yourmt3_file_list_json(
+            data_root=output_data_root,
+            filename="synthetic_drums_test_file_list.json",
+            examples=test,
+        )
+
         return all_examples
+

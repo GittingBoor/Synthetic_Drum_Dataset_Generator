@@ -23,7 +23,8 @@ OUTPUT_ROOT_DIRECTORY = "data/synthetic_drums_dataset_test_1"  # e.g. "data/synt
 # Subfolders (relative to OUTPUT_ROOT_DIRECTORY)
 MIDI_SUBDIR = "midi"    # e.g. "midi_files"
 AUDIO_SUBDIR = "audio"  # e.g. "wav"
-LABEL_SUBDIR = "labels" # e.g. "json_labels"
+NOTES_SUBDIR = "notes"
+NOTE_EVENTS_SUBDIR = "note_events"
 
 # Audio / MIDI rendering backends and rates
 SOUNDFONT_PATH = "Assets/GeneralUser-GS.sf2"  # alternative: any valid .sf2 soundfont
@@ -52,6 +53,13 @@ MINIMUM_VELOCITY = 5         # alternative: 1 if you want to keep very soft note
 TIME_UNIT = "seconds"        # alternative: "ticks"
 INCLUDE_NON_DRUMS = True     # alternative: False if you want drum-only labels
 
+
+# Split-Konfiguration für YourMT3 file_lists
+TRAIN_RATIO = 0.80
+VAL_RATIO = 0.10
+TEST_RATIO = 0.10
+SPLIT_SEED = 1234
+
 # Which presets to use when building a full dataset.
 # Use names from DATASET_PRESETS.keys().
 
@@ -76,7 +84,6 @@ dataset_config = {
     "output_root_directory": OUTPUT_ROOT_DIRECTORY,
     "midi_subdir": MIDI_SUBDIR,
     "audio_subdir": AUDIO_SUBDIR,
-    "label_subdir": LABEL_SUBDIR,
     "soundfont_path": SOUNDFONT_PATH,
     "audio_sample_rate": AUDIO_SAMPLE_RATE,
     "audio_render_backend": AUDIO_RENDER_BACKEND,
@@ -91,6 +98,10 @@ dataset_config = {
     "time_unit": TIME_UNIT,
     "include_non_drums": INCLUDE_NON_DRUMS,
     "preset_names_to_use": PRESET_NAMES_TO_USE,
+    "train_ratio": TRAIN_RATIO,
+    "val_ratio": VAL_RATIO,
+    "test_ratio": TEST_RATIO,
+    "split_seed": SPLIT_SEED,
 }
 
 def main() -> None:
@@ -178,9 +189,11 @@ def main() -> None:
     print("\n============================================================")
     print(f"Fertig! {len(examples)} neue Beispiele wurden erzeugt.")
     print(f"Output-Root: {OUTPUT_ROOT_DIRECTORY}")
-    print(f"- MIDI   in: {os.path.join(OUTPUT_ROOT_DIRECTORY, MIDI_SUBDIR)}")
-    print(f"- Audio  in: {os.path.join(OUTPUT_ROOT_DIRECTORY, AUDIO_SUBDIR)}")
-    print(f"- Labels in: {os.path.join(OUTPUT_ROOT_DIRECTORY, LABEL_SUBDIR)}")
+    print(f"- MIDI        in: {os.path.join(OUTPUT_ROOT_DIRECTORY, MIDI_SUBDIR)}")
+    print(f"- Audio       in: {os.path.join(OUTPUT_ROOT_DIRECTORY, AUDIO_SUBDIR)}")
+    print(f"- Notes (.npy) in: {os.path.join(OUTPUT_ROOT_DIRECTORY, NOTES_SUBDIR)}")
+    print(f"- NoteEvents   in: {os.path.join(OUTPUT_ROOT_DIRECTORY, NOTE_EVENTS_SUBDIR)}")
+    print(f"- YourMT3 idx  in: {os.path.join('data', 'yourmt3_indexes')}")
     print(f"- Index:     {index_path}")
     print("============================================================")
 
