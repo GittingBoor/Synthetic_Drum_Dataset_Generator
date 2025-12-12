@@ -1,0 +1,6 @@
+muspy
+numpy
+pretty_midi
+soundfile
+tqdm
+pyfluidsynth
