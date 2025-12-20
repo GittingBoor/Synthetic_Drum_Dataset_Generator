@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from typing import List
+from pathlib import Path
 
 from script.audio_renderer import AudioRenderer
 from script.dataset_presets import DatasetPreset, DATASET_PRESETS
@@ -17,9 +18,24 @@ from script.midi_song_builder import MidiSongBuilder
 # SYSTEM-DEPENDENT PATHS AND IO PARAMETERS
 # ---------------------------------------------------------------------------
 
-# Root folder for the dataset (will be created automatically)
-OUTPUT_ROOT_DIRECTORY = "data/synthetic_drums_dataset_test_1"  # e.g. "data/synthetic_drums_dataset_v1"
+CUSTOM_DIRECTORY = True
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_DATA_ROOT = PROJECT_ROOT / "data"
+
+if CUSTOM_DIRECTORY:
+    # Dataset soll hier rein (Ordnername ist DER Dataset-Ordner selbst)
+    DATASET_OUTPUT_ROOT_DIRECTORY = Path("/home/entraID/benedikt.kolodziej@study.hs-duesseldorf.de/data/synthetic_drums_dataset_v1")
+
+    # YourMT3 Index-Dateien sollen in existierenden Ordner (ohne extra Unterordner)
+    YOURMT3_INDEX_OUTPUT_DIRECTORY = Path("/home/entraID/benedikt.kolodziej@study.hs-duesseldorf.de/data/yourmt3_indexes")
+else:
+    DATASET_OUTPUT_ROOT_DIRECTORY = DEFAULT_DATA_ROOT / "synthetic_drums_dataset_test_v1"
+    YOURMT3_INDEX_OUTPUT_DIRECTORY = DEFAULT_DATA_ROOT / "yourmt3_indexes"
+
+# optional: sicherstellen, dass Ordner existieren
+DATASET_OUTPUT_ROOT_DIRECTORY.mkdir(parents=True, exist_ok=True)
+YOURMT3_INDEX_OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
 # Subfolders (relative to OUTPUT_ROOT_DIRECTORY)
 MIDI_SUBDIR = "midi"    # e.g. "midi_files"
 AUDIO_SUBDIR = "audio"  # e.g. "wav"
@@ -39,7 +55,7 @@ MIDI_TICKS_PER_BEAT = 480  # alternative: 960 for higher timing resolution
 # ---------------------------------------------------------------------------
 
 # Number of songs per preset (total songs = NUMBER_OF_SONGS * NUMBER_OF_PRESETS)
-NUMBER_OF_SONGS = 1  # e.g. 5, 50, 100
+NUMBER_OF_SONGS = 250  # 250 est. 20.000 Songs est. 200h
 
 # Song length in seconds (a random target length in this range will be chosen per song)
 MIN_SONG_LENGTH_SECONDS = 20.0  # e.g. 5.0 for very short clips
@@ -81,7 +97,7 @@ assert NUMBER_OF_PRESETS <= len(PRESET_NAMES_TO_USE), (
 )
 
 dataset_config = {
-    "output_root_directory": OUTPUT_ROOT_DIRECTORY,
+    "output_root_directory": DATASET_OUTPUT_ROOT_DIRECTORY,
     "midi_subdir": MIDI_SUBDIR,
     "audio_subdir": AUDIO_SUBDIR,
     "soundfont_path": SOUNDFONT_PATH,
@@ -157,7 +173,7 @@ def main() -> None:
     # 2) DatasetBuilder erstellen
     # ------------------------------------------------------------------
     builder = DatasetBuilder(
-        output_root_directory=OUTPUT_ROOT_DIRECTORY,
+        output_root_directory=DATASET_OUTPUT_ROOT_DIRECTORY,
         number_of_songs=NUMBER_OF_SONGS,
         band_configuration_pool=band_configuration_pool,
         drum_pattern_generator=drum_pattern_generator,
@@ -176,23 +192,24 @@ def main() -> None:
     # ------------------------------------------------------------------
     examples = builder.build_dataset(
         presets=selected_presets,
-        output_root=OUTPUT_ROOT_DIRECTORY,
+        output_root=str(DATASET_OUTPUT_ROOT_DIRECTORY),
         dataset_config=dataset_config,
+        yourmt3_index_output_dir=str(YOURMT3_INDEX_OUTPUT_DIRECTORY),
     )
     # ------------------------------------------------------------------
     # 4) Index-Datei aktualisieren (Append-Logik steckt in builder.save_index)
     # ------------------------------------------------------------------
-    builder.save_index(output_root=OUTPUT_ROOT_DIRECTORY)
+    builder.save_index(output_root=DATASET_OUTPUT_ROOT_DIRECTORY)
 
-    index_path = os.path.join(OUTPUT_ROOT_DIRECTORY, "dataset_index.json")
+    index_path = os.path.join(DATASET_OUTPUT_ROOT_DIRECTORY, "dataset_index.json")
 
     print("\n============================================================")
     print(f"Fertig! {len(examples)} neue Beispiele wurden erzeugt.")
-    print(f"Output-Root: {OUTPUT_ROOT_DIRECTORY}")
-    print(f"- MIDI        in: {os.path.join(OUTPUT_ROOT_DIRECTORY, MIDI_SUBDIR)}")
-    print(f"- Audio       in: {os.path.join(OUTPUT_ROOT_DIRECTORY, AUDIO_SUBDIR)}")
-    print(f"- Notes (.npy) in: {os.path.join(OUTPUT_ROOT_DIRECTORY, NOTES_SUBDIR)}")
-    print(f"- NoteEvents   in: {os.path.join(OUTPUT_ROOT_DIRECTORY, NOTE_EVENTS_SUBDIR)}")
+    print(f"Output-Root: {DATASET_OUTPUT_ROOT_DIRECTORY}")
+    print(f"- MIDI        in: {os.path.join(DATASET_OUTPUT_ROOT_DIRECTORY, MIDI_SUBDIR)}")
+    print(f"- Audio       in: {os.path.join(DATASET_OUTPUT_ROOT_DIRECTORY, AUDIO_SUBDIR)}")
+    print(f"- Notes (.npy) in: {os.path.join(DATASET_OUTPUT_ROOT_DIRECTORY, NOTES_SUBDIR)}")
+    print(f"- NoteEvents   in: {os.path.join(DATASET_OUTPUT_ROOT_DIRECTORY, NOTE_EVENTS_SUBDIR)}")
     print(f"- YourMT3 idx  in: {os.path.join('data', 'yourmt3_indexes')}")
     print(f"- Index:     {index_path}")
     print("============================================================")

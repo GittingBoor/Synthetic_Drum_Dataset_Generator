@@ -21,4 +21,5 @@ Thumbs.db
 script/_dataset_builder_test_output/
 
 # Data
-data/
+data/*
+!data/.gitkeep

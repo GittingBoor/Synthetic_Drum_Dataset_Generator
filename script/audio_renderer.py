@@ -2,60 +2,84 @@ from __future__ import annotations
 
 import ctypes
 import os
+from ctypes.util import find_library
+from typing import Optional
 import pretty_midi
 import soundfile as sf
 
+_FS_NOOP_CB = None
 
-def _disable_fluidsynth_warnings() -> None:
-    """Schaltet FluidSynth-Logs auf WARN/INFO/DBG stumm.
+def _load_fluidsynth_library() -> Optional[ctypes.CDLL]:
+    candidates: list[str] = []
 
-    Wenn libfluidsynth nicht gefunden wird, passiert einfach nichts.
-    """
-    try:
-        lib = None
+    # Conda: bevorzugt direkt aus dem Env laden
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidates.extend(
+            [
+                os.path.join(conda_prefix, "lib", "libfluidsynth.so.3"),
+                os.path.join(conda_prefix, "lib", "libfluidsynth.so.2"),
+                os.path.join(conda_prefix, "lib", "libfluidsynth.so"),
+            ]
+        )
 
-        # Typische DLL-Namen unter Windows – evtl. musst du den richtigen einmal testen
-        dll_candidates = [
+    # Linux generische Namen
+    candidates.extend(["libfluidsynth.so.3", "libfluidsynth.so.2", "libfluidsynth.so"])
+
+    # Windows (falls du es auch dort weiter nutzen willst)
+    candidates.extend(
+        [
             "libfluidsynth-3.dll",
             "libfluidsynth-2.dll",
             "libfluidsynth.dll",
             "fluidsynth.dll",
         ]
+    )
 
-        for name in dll_candidates:
-            try:
-                lib = ctypes.CDLL(name)
-                break
-            except OSError:
-                continue
+    # system lookup
+    found = find_library("fluidsynth")
+    if found:
+        candidates.append(found)
 
+    for name in candidates:
+        try:
+            return ctypes.CDLL(name)
+        except OSError:
+            continue
+
+    return None
+
+
+def _disable_fluidsynth_warnings() -> None:
+    """Schaltet FluidSynth-Logs auf WARN/INFO/DBG stumm (plattformübergreifend)."""
+    global _FS_NOOP_CB
+
+    try:
+        lib = _load_fluidsynth_library()
         if lib is None:
-            # Konnten die DLL nicht finden -> nichts machen
             return
 
-        # Log-Level-Werte aus libfluidsynth (Reihenfolge laut Doku)
-        FLUID_PANIC = 0
-        FLUID_ERR = 1
+        # log levels (fluidsynth)
         FLUID_WARN = 2
         FLUID_INFO = 3
         FLUID_DBG = 4
 
-        # Signatur von fluid_set_log_function(int level, fluid_log_function_t fun, void* data)
-        lib.fluid_set_log_function.argtypes = (
-            ctypes.c_int,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-        )
+        # callback signature: void (*)(int level, const char* message, void* data)
+        CALLBACK = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
+
+        def _noop(_level: int, _message: bytes, _data: ctypes.c_void_p) -> None:
+            return
+
+        _FS_NOOP_CB = CALLBACK(_noop)
+
+        lib.fluid_set_log_function.argtypes = (ctypes.c_int, CALLBACK, ctypes.c_void_p)
         lib.fluid_set_log_function.restype = ctypes.c_void_p
 
-        # WARN / INFO / DBG komplett abschalten
         for level in (FLUID_WARN, FLUID_INFO, FLUID_DBG):
-            lib.fluid_set_log_function(level, None, None)
+            lib.fluid_set_log_function(level, _FS_NOOP_CB, None)
 
     except Exception:
-        # Wenn irgendwas schiefgeht, wollen wir lieber weiterlaufen
         return
-
 
 class AudioRenderer:
     """Rendert MIDI-Dateien zu Audiodateien (z. B. WAV).

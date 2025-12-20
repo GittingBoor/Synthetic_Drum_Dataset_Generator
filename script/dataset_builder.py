@@ -27,7 +27,6 @@ from .dataset_presets import DatasetPreset, DATASET_PRESETS
 from .band_configuration import BandConfiguration
 from .instrument import Instrument
 
-
 class DatasetBuilder:
     # Typ-Annotationen für PyCharm / Mypy
     output_root_directory: str
@@ -884,7 +883,7 @@ class DatasetBuilder:
     ) -> None:
         info_path = os.path.join(output_root, "dataset_info.json")
         with open(info_path, "w", encoding="utf-8") as f:
-            json.dump(dataset_info, f, indent=2, ensure_ascii=False)
+            json.dump(dataset_info, f, indent=2, ensure_ascii=False, default=str)
 
     def _load_existing_dataset_info(self, output_root: str) -> dict[str, Any] | None:
         """Lädt eine bestehende dataset_info.json, falls vorhanden.
@@ -912,7 +911,7 @@ class DatasetBuilder:
         Beispiel:
             "0001_C-major_pop-straight_Inst5_BPM120_Seed1234"
         """
-        index_str = f"{song_index:04d}"
+        index_str = f"{song_index:06d}"
         key_str = song_specification.key.replace(" ", "-")
         style_str = song_specification.style
 
@@ -951,7 +950,7 @@ class DatasetBuilder:
         # Eigener Random-Generator pro Index, damit reproduzierbar
         rnd = random.Random(self.random_seed + index)
 
-        song_identifier = f"song_{index:04d}"
+        song_identifier = f"song_{index:06d}"
 
         tempo_bpm = rnd.uniform(90.0, 140.0)  # 90–140 BPM
         time_signature = rnd.choice([(4, 4), (3, 4)])
@@ -1105,8 +1104,19 @@ class DatasetBuilder:
             presets: List[DatasetPreset],
             output_root: str,
             dataset_config: dict[str, Any],
+            yourmt3_index_output_dir: str | None = None,
     ) -> List[DatasetExample]:
-        # 1) Output-Verzeichnisse vorbereiten
+
+        output_root_path = Path(output_root)
+        output_root_path.mkdir(parents=True, exist_ok=True)
+
+        if yourmt3_index_output_dir is None:
+            yourmt3_index_output_path = output_root_path / "yourmt3_indexes"
+        else:
+            yourmt3_index_output_path = Path(yourmt3_index_output_dir)
+
+        yourmt3_index_output_path.mkdir(parents=True, exist_ok=True)
+
         midi_dir, audio_dir, label_dir, notes_dir, note_events_dir = self._prepare_output_dirs(output_root)
 
 
